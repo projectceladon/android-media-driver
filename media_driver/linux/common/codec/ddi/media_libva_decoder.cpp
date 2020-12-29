@@ -40,9 +40,7 @@
 #include "media_ddi_decode_base.h"
 #include "media_interfaces.h"
 #include "media_ddi_decode_const.h"
-#if _APOGEIOS_SUPPORTED
 #include "decode_status_report.h"
-#endif
 
 #if !defined(ANDROID) && defined(X11_FOUND)
 #include <X11/Xutil.h>
@@ -316,7 +314,6 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
     return VA_STATUS_SUCCESS;
 }
 
-#if _APOGEIOS_SUPPORTED
 VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, DecodePipelineAdapter *decoder, DDI_MEDIA_SURFACE *surface)
 {
     if (surface->curStatusReportQueryState == DDI_MEDIA_STATUS_REPORT_QUERY_STATE_PENDING)
@@ -388,7 +385,6 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, DecodePipelineAdapt
     }
     return VA_STATUS_SUCCESS;
 }
-#endif
 
 /*
  *  vpgDecodeCreateContext - Create a decode context
@@ -500,17 +496,22 @@ VAStatus DdiDecode_CreateContext (
     mosCtx.pfnMemoryDecompress   = mediaCtx->pfnMemoryDecompress;
     mosCtx.pfnMediaMemoryCopy    = mediaCtx->pfnMediaMemoryCopy;
     mosCtx.pfnMediaMemoryCopy2D  = mediaCtx->pfnMediaMemoryCopy2D;
-    mosCtx.pPerfData             = (PERF_DATA *)MOS_AllocAndZeroMemory(sizeof(PERF_DATA));
+    mosCtx.ppMediaCopyState      = &mediaCtx->pMediaCopyState;
+    mosCtx.pfnMediaCopy          = mediaCtx->pfnMediaCopy;
     mosCtx.m_auxTableMgr         = mediaCtx->m_auxTableMgr;
     mosCtx.pGmmClientContext     = mediaCtx->pGmmClientContext;
     mosCtx.m_osDeviceContext     = mediaCtx->m_osDeviceContext;
     mosCtx.m_apoMosEnabled       = mediaCtx->m_apoMosEnabled;
 
-    if (nullptr == mosCtx.pPerfData)
+    if (!mediaCtx->m_apoMosEnabled)
     {
-        va = VA_STATUS_ERROR_ALLOCATION_FAILED;
-        DdiDecodeCleanUp(ctx,decCtx);
-        return va;
+        mosCtx.pPerfData = (PERF_DATA *)MOS_AllocAndZeroMemory(sizeof(PERF_DATA));
+        if (nullptr == mosCtx.pPerfData)
+        {
+            va = VA_STATUS_ERROR_ALLOCATION_FAILED;
+            DdiDecodeCleanUp(ctx, decCtx);
+            return va;
+        }
     }
 
     ddiDecBase->ContextInit(pictureWidth, pictureHeight);

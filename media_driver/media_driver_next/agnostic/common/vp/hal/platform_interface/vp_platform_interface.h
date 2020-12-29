@@ -27,19 +27,65 @@
 #ifndef __VP_PLATFORM_INTERFACE_H__
 #define __VP_PLATFORM_INTERFACE_H__
 
+#include "hal_kerneldll.h"
+#include "vp_feature_manager.h"
+
 namespace vp
 {
+class VPFeatureManager;
+class SfcRenderBase;
+
+#define VP_USE_MEDIA_THREADS_MAX         0
+
+class VpKernelSet;
+
+class VpRenderKernel
+{
+public:
+    VpRenderKernel() {};
+    virtual ~VpRenderKernel() {};
+
+    MOS_STATUS InitVPKernel(
+        const Kdll_RuleEntry* kernelRules,
+        const uint32_t*       kernelBin,
+        uint32_t              kernelSize,
+        const uint32_t*       patchKernelBin,
+        uint32_t              patchKernelSize,
+        void(*ModifyFunctionPointers)(PKdll_State));
+
+    MOS_STATUS Destroy();
+
+    Kdll_State* GetKdllState()
+    {
+        return m_kernelDllState;
+    }
+
+protected:
+    // Compositing Kernel DLL/Search state
+    const Kdll_RuleEntry        *m_kernelDllRules = nullptr;
+    Kdll_State                  *m_kernelDllState = nullptr;
+
+    // Compositing Kernel buffer and size
+    const void                  *m_kernelBin = nullptr;
+    uint32_t                     m_kernelBinSize = 0;
+
+    // CM Compositing Kernel patch file buffer and size
+    const void                  *m_fcPatchBin = nullptr;
+    uint32_t                    m_fcPatchBinSize = 0;
+};
 
 class VpPlatformInterface
 {
 public:
 
-    VpPlatformInterface()
+    VpPlatformInterface(PMOS_INTERFACE pOsInterface)
     {
+        m_pOsInterface = pOsInterface;
     }
 
     virtual ~VpPlatformInterface()
     {
+        m_kernel.Destroy();
     }
 
     virtual MOS_STATUS InitVpVeboxSfcHwCaps(VP_VEBOX_ENTRY_REC *veboxHwEntry, uint32_t veboxEntryCount, VP_SFC_ENTRY_REC *sfcHwEntry, uint32_t sfcEntryCount)
@@ -58,10 +104,45 @@ public:
     {
         return nullptr;
     }
-    virtual VpCmdPacket *CreateRenderPacket(MediaTask * task, _VP_MHWINTERFACE *hwInterface, VpAllocator *&allocator, VPMediaMemComp *mmc)
+    virtual VpCmdPacket *CreateRenderPacket(MediaTask * task, _VP_MHWINTERFACE *hwInterface, VpAllocator *&allocator, VPMediaMemComp *mmc, VpKernelSet* kernel)
     {
         return nullptr;
     }
+
+    virtual MOS_STATUS CreateSfcRender(SfcRenderBase *&sfcRender, VP_MHWINTERFACE &vpMhwinterface, PVpAllocator allocator)
+    {
+        return MOS_STATUS_UNIMPLEMENTED;
+    }
+
+    VpRenderKernel* GetKernel()
+    {
+        return &m_kernel;
+    }
+
+    virtual MOS_STATUS VeboxQueryStatLayout(
+        VEBOX_STAT_QUERY_TYPE QueryType,
+        uint32_t* pQuery)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual uint32_t VeboxQueryStaticSurfaceSize()
+    {
+        return 32 * 8;
+    }
+
+    virtual RENDERHAL_KERNEL_PARAM GetVeboxKernelSettings(uint32_t iKDTIndex)
+    {
+        RENDERHAL_KERNEL_PARAM kernelParam;
+        MOS_ZeroMemory(&kernelParam, sizeof(RENDERHAL_KERNEL_PARAM));
+
+        return kernelParam;
+    }
+
+protected:
+    PMOS_INTERFACE m_pOsInterface = nullptr;
+    VpRenderKernel m_kernel;
+    void (*m_modifyKdllFunctionPointers)(PKdll_State) = nullptr;
 };
 
 }

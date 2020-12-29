@@ -100,6 +100,10 @@ protected:
 
     static const uint32_t  m_hevcVdencHucErrorFlagMask = 0x40000000;  //!< HEVC VDEnc Huc error flag mask, bit 30
 
+    static const uint32_t  m_vp9VdencHucErrorFlagMask  = 0x40000000;  //!< VP9C VDEnc Huc error flag mask, bit 30 (same as hevc)
+
+    static const uint32_t  m_avcVdencHucErrorFlagMask  = 0x20000000;  //!< AVC VDEnc Huc error flag mask, bit 29
+
     static const uint32_t  m_hucStatusReEncodeMask = 0x80000000;  //! HUC PAK Integration kernel reEncode mask.
 
     MmioRegistersHuc       m_mmioRegisters[MHW_VDBOX_NODE_MAX] = { };  //!< HuC mmio registers
@@ -174,6 +178,17 @@ public:
     }
 
     //!
+    //! \brief    Get AVC VDEnc Huc Error Flag Mask
+    //!
+    //! \return   [out] uint32_t
+    //!           Mask got.
+    //!
+    inline uint32_t GetAvcVdencHucErrorFlagMask()
+    {
+        return m_avcVdencHucErrorFlagMask;
+    }
+
+    //!
     //! \brief    Get HEVC VDEnc Huc Error Flag Mask
     //!
     //! \return   [out] uint32_t
@@ -182,6 +197,17 @@ public:
     inline uint32_t GetHevcVdencHucErrorFlagMask()
     {
         return m_hevcVdencHucErrorFlagMask;
+    }
+
+    //!
+    //! \brief    Get VP9 VDEnc Huc Error Flag Mask
+    //!
+    //! \return   [out] uint32_t
+    //!           Mask got.
+    //!
+    inline uint32_t GetVp9VdencHucErrorFlagMask()
+    {
+        return m_vp9VdencHucErrorFlagMask;
     }
 
     //!

@@ -268,6 +268,7 @@ MOS_STATUS Mos_OsGetBitsPerPixel(
     case Format_Buffer:
     case Format_RAW:
     case Format_R8U:
+    case Format_R8UN:
        *piBpp = 8;
         break;
 
@@ -522,7 +523,8 @@ MOS_STATUS Mos_DumpCommandBufferInit(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DUMP_COMMAND_BUFFER_ENABLE_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        pOsInterface->pOsContext);
     pOsInterface->bDumpCommandBuffer = (UserFeatureData.i32Data != 0);
     pOsInterface->bDumpCommandBufferToFile = ((UserFeatureData.i32Data & 1) != 0);
     pOsInterface->bDumpCommandBufferAsMessages = ((UserFeatureData.i32Data & 2) != 0);
@@ -530,7 +532,7 @@ MOS_STATUS Mos_DumpCommandBufferInit(
     if (pOsInterface->bDumpCommandBufferToFile)
     {
         // Create output directory.
-        eStatus = MOS_LogFileNamePrefix(pOsInterface->sDirName);
+        eStatus = MOS_LogFileNamePrefix(pOsInterface->sDirName, pOsInterface->pOsContext);
         if (eStatus != MOS_STATUS_SUCCESS)
         {
             MOS_OS_NORMALMESSAGE("Failed to create log file prefix. Status = %d", eStatus);
@@ -567,23 +569,24 @@ finish:
 
 std::shared_ptr<GpuCmdResInfoDump> GpuCmdResInfoDump::m_instance = nullptr;
 
-const GpuCmdResInfoDump *GpuCmdResInfoDump::GetInstance()
+const GpuCmdResInfoDump *GpuCmdResInfoDump::GetInstance(PMOS_CONTEXT mosCtx)
 {
     if (m_instance == nullptr)
     {
-        m_instance = std::make_shared<GpuCmdResInfoDump>();
+        m_instance = std::make_shared<GpuCmdResInfoDump>(mosCtx);
     }
     return m_instance.get();
 }
 
-GpuCmdResInfoDump::GpuCmdResInfoDump()
+GpuCmdResInfoDump::GpuCmdResInfoDump(PMOS_CONTEXT mosCtx)
 {
     MOS_USER_FEATURE_VALUE_DATA userFeatureData;
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DUMP_COMMAND_INFO_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        mosCtx);
     m_dumpEnabled = userFeatureData.bData;
 
     if (!m_dumpEnabled)
@@ -598,7 +601,8 @@ GpuCmdResInfoDump::GpuCmdResInfoDump()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DUMP_COMMAND_INFO_PATH_ID,
-        &userFeatureData);
+        &userFeatureData,
+        mosCtx);
     if (userFeatureData.StringData.uSize > MOS_MAX_PATH_LENGTH)
     {
         userFeatureData.StringData.uSize = 0;
@@ -737,7 +741,8 @@ MOS_STATUS Mos_InitInterface(
     MOS_UserFeature_WriteValues_ID(
         nullptr,
         &UserFeatureWriteData,
-        1);
+        1,
+        pOsInterface->pOsContext);
 
     // Apo wrapper
     if (pOsInterface->apoMosEnabled && !pOsInterface->streamStateIniter)
@@ -973,7 +978,8 @@ MOS_STATUS Mos_CheckVirtualEngineSupported(
         eStatus = MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_DECODE_VIRTUAL_ENGINE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            osInterface->pOsContext);
         osInterface->bSupportVirtualEngine = userFeatureData.u32Data ? true : false;
 
         // force bSupportVirtualEngine to false when virtual engine not enabled by default
@@ -1005,7 +1011,7 @@ MOS_STATUS Mos_CheckVirtualEngineSupported(
         MOS_USER_FEATURE_VALUE_WRITE_DATA  userFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;
         userFeatureWriteData.Value.i32Data = osInterface->ctxBasedScheduling ? true : false;
         userFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_ENABLE_DECODE_VE_CTXSCHEDULING_ID;
-        MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1);
+        MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, osInterface->pOsContext);
 #endif
     }
     else
@@ -1015,7 +1021,8 @@ MOS_STATUS Mos_CheckVirtualEngineSupported(
         eStatus = MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_ENCODE_VIRTUAL_ENGINE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            osInterface->pOsContext);
         osInterface->bSupportVirtualEngine = userFeatureData.u32Data ? true : false;
 
         // force bSupportVirtualEngine to false when virtual engine not enabled by default

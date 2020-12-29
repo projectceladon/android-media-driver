@@ -92,29 +92,29 @@
     MOS_CHK_COND_RETURN(MOS_COMPONENT_CODEC, MOS_CODEC_SUBCOMP_ENCODE,_expr,_message, ##__VA_ARGS__)
 
 // User Feature Report Writeout
-#define CodecHalEncode_WriteKey64(key, value)\
+#define CodecHalEncode_WriteKey64(key, value, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.i64Data  = (value);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
-#define CodecHalEncode_WriteKey(key, value)\
+#define CodecHalEncode_WriteKey(key, value, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.i32Data  = (value);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
-#define CodecHalEncode_WriteStringKey(key, value, len)\
+#define CodecHalEncode_WriteStringKey(key, value, len, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.StringData.pStringData = (value);\
     UserFeatureWriteData.Value.StringData.uSize = (len);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
 //!
@@ -280,29 +280,29 @@ enum MbBrcSetting
 };
 
 // User Feature Key Report Writeout
-#define CodecHalEncodeWriteKey64(key, value)\
+#define CodecHalEncodeWriteKey64(key, value, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.i64Data  = (value);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
-#define CodecHalEncodeWriteKey(key, value)\
+#define CodecHalEncodeWriteKey(key, value, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.i32Data  = (value);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
-#define CodecHalEncodeWriteStringKey(key, value, len)\
+#define CodecHalEncodeWriteStringKey(key, value, len, mosCtx)\
 {\
     MOS_USER_FEATURE_VALUE_WRITE_DATA   UserFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;\
     UserFeatureWriteData.Value.StringData.pStringData = (value);\
     UserFeatureWriteData.Value.StringData.uSize = (len);\
     UserFeatureWriteData.ValueID        = (key);\
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);\
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, mosCtx);\
 }
 
 // ---------------------------
@@ -784,7 +784,10 @@ struct LookaheadReport
     };
     uint32_t targetFrameSize;
     uint32_t targetBufferFulness;
-    uint32_t reserved3[12];
+    uint32_t pyramidDeltaQP;
+    uint8_t  miniGopSize;
+    uint8_t  reserved1[3];
+    uint32_t reserved3[10];
 };
 
 //!
@@ -913,7 +916,6 @@ struct EncodeStatusReport
     uint8_t                         UsedVdBoxNumber;        //!< Number of vdbox used.
     uint32_t                        SizeOfSliceSizesBuffer; //!< Store the size of slice size buffer
     uint16_t                        *pSliceSizes;           //!< Pointer to the slice size buffer
-    uint8_t                         cqmHint;                //!< CQM hint. 0x00 - flat matrix; 0x01 - enable CQM; 0xFF - invalid hint; other vlaues are reserved.
     uint32_t                        SizeOfTileInfoBuffer;   //!< Store the size of tile info buffer
     CodechalTileInfo*               pHEVCTileinfo;          //!< Pointer to the tile info buffer
     uint32_t                        NumTileReported;        //!< The number of tiles reported in status
@@ -937,6 +939,7 @@ struct EncodeStatusSliceReport
     uint8_t                         NumberSlices;
     uint32_t                        SizeOfSliceSizesBuffer;
     PMOS_RESOURCE                   pSliceSize;
+    uint32_t                        reserved;
 };
 
 //!
@@ -1071,28 +1074,6 @@ struct VdencBrcPakMmio
 struct VdencHucErrorStatus
 {
     uint32_t                dwErrorFlag[4];
-};
-
-//!
-//! \struct    CodechalEncodeLaData
-//! \brief     Codechal encode lookahead analysis output data structure, used by BRC kernel
-//!
-struct CodechalEncodeLaData
-{
-    uint32_t reserved0[1];
-    uint32_t targetFrameSize;
-    uint32_t targetBufferFulness;
-    uint32_t reserved1[2];
-    union
-    {
-        struct
-        {
-            uint32_t cqmHint    : 8;  //!< Custom quantization matrix hint. 0x00 - flat matrix; 0x01 - CQM; 0xFF - invalid hint; other values are reserved.
-            uint32_t reserved2  : 24;
-        };
-        uint32_t report;
-    };
-    uint32_t reserved3[10];
 };
 
 //!
@@ -1563,11 +1544,7 @@ public:
     bool                            m_vdencBrcImgStatAllocated = false;   //!< Vdenc bitrate control image state allocated flag
 
     // VDEnc dynamic slice control params
-    uint32_t                       m_mbSlcThresholdValue = 0;    //!< MB slice threshold value
-    uint32_t                       m_sliceThresholdTable = 0;    //!< Slice threshold table
     uint32_t                       m_vdencFlushDelayCount = 0;   //!< Vdenc flush delay count
-    uint32_t                       m_vdencSliceMinusI = 0;       //!< Vdenc slice minus I
-    uint32_t                       m_vdencSliceMinusP = 0;       //!< Vdenc slice minus P
 
     HMODULE                        m_swBrcMode = nullptr;        //!< Software bitrate control mode
 

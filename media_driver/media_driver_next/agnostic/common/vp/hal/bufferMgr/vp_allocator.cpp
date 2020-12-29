@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019, Intel Corporation
+* Copyright (c) 2019-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -87,6 +87,44 @@ MOS_STATUS VpAllocator::FreeResource(MOS_RESOURCE *resource)
     return m_allocator->FreeResource(resource);
 }
 
+void VpAllocator::UpdateSurfacePlaneOffset(MOS_SURFACE &surf)
+{
+    // dwOffset/YPlaneOffset/UPlaneOffset/VPlaneOffset will not be initialized during GetSurfaceInfo.
+    // Initialize them with RenderOffset when needed.
+    if (IS_RGB32_FORMAT(surf.Format) ||
+        IS_RGB16_FORMAT(surf.Format) ||
+        IS_RGB64_FORMAT(surf.Format) ||
+        surf.Format == Format_RGB    ||
+        surf.Format == Format_Y410)
+    {
+        surf.dwOffset                        = surf.RenderOffset.RGB.BaseOffset;
+        surf.YPlaneOffset.iSurfaceOffset     = surf.RenderOffset.RGB.BaseOffset;
+        surf.YPlaneOffset.iXOffset           = surf.RenderOffset.RGB.XOffset;
+        surf.YPlaneOffset.iYOffset           = surf.RenderOffset.RGB.YOffset;
+    }
+    else // YUV or PL3_RGB
+    {
+        // Get Y plane information (plane offset, X/Y offset)
+        surf.dwOffset                        = surf.RenderOffset.YUV.Y.BaseOffset;
+        surf.YPlaneOffset.iSurfaceOffset     = surf.RenderOffset.YUV.Y.BaseOffset;
+        surf.YPlaneOffset.iXOffset           = surf.RenderOffset.YUV.Y.XOffset;
+        surf.YPlaneOffset.iYOffset           = surf.RenderOffset.YUV.Y.YOffset;
+        surf.YPlaneOffset.iLockSurfaceOffset = surf.LockOffset.YUV.Y;
+
+        // Get U/UV plane information (plane offset, X/Y offset)
+        surf.UPlaneOffset.iSurfaceOffset     = surf.RenderOffset.YUV.U.BaseOffset;
+        surf.UPlaneOffset.iXOffset           = surf.RenderOffset.YUV.U.XOffset;
+        surf.UPlaneOffset.iYOffset           = surf.RenderOffset.YUV.U.YOffset;
+        surf.UPlaneOffset.iLockSurfaceOffset = surf.LockOffset.YUV.U;
+
+        // Get V plane information (plane offset, X/Y offset)
+        surf.VPlaneOffset.iSurfaceOffset     = surf.RenderOffset.YUV.V.BaseOffset;
+        surf.VPlaneOffset.iXOffset           = surf.RenderOffset.YUV.V.XOffset;
+        surf.VPlaneOffset.iYOffset           = surf.RenderOffset.YUV.V.YOffset;
+        surf.VPlaneOffset.iLockSurfaceOffset = surf.LockOffset.YUV.V;
+    }
+}
+
 //Paried with AllocateSurface
 MOS_SURFACE* VpAllocator::AllocateSurface(MOS_ALLOC_GFXRES_PARAMS &param, bool zeroOnAllocate)
 {
@@ -107,6 +145,8 @@ MOS_SURFACE* VpAllocator::AllocateSurface(MOS_ALLOC_GFXRES_PARAMS &param, bool z
             m_allocator->DestroySurface(surf);
             return nullptr;
         }
+
+        UpdateSurfacePlaneOffset(*surf);
     }
 
     return surf;
@@ -127,6 +167,20 @@ VP_SURFACE* VpAllocator::AllocateVpSurface(MOS_ALLOC_GFXRES_PARAMS &param, bool 
         return nullptr;
     }
     MOS_ZeroMemory(surface, sizeof(VP_SURFACE));
+
+    // Only used for Buffer surface
+    uint32_t bufferWidth  = 0;
+    uint32_t bufferHeight = 0;
+
+
+    if (param.Format == Format_Buffer)
+    {
+        bufferWidth   = param.dwWidth;
+        bufferHeight  = param.dwHeight;
+        param.dwWidth = param.dwWidth * param.dwHeight;
+        param.dwHeight = 1;
+    }
+
     surface->osSurface = AllocateSurface(param, zeroOnAllocate);
 
     if (nullptr == surface->osSurface)
@@ -145,6 +199,13 @@ VP_SURFACE* VpAllocator::AllocateVpSurface(MOS_ALLOC_GFXRES_PARAMS &param, bool 
     surface->rcSrc.bottom   = surface->osSurface->dwHeight;
     surface->rcDst          = surface->rcSrc;
     surface->rcMaxSrc       = surface->rcSrc;
+
+
+    if (param.Format == Format_Buffer)
+    {
+        surface->bufferWidth = bufferWidth;
+        surface->bufferHeight = bufferHeight;
+    }
 
     return surface;
 }
@@ -269,6 +330,50 @@ VP_SURFACE *VpAllocator::AllocateVpSurface(VP_SURFACE &vpSurfSrc)
 
     surf->osSurface = osSurface;
     surf->isResourceOwner = false;
+
+    return surf;
+}
+
+// Allocate vp surface from osSurf. Reuse the resource in osSurf.
+VP_SURFACE *VpAllocator::AllocateVpSurface(MOS_SURFACE &osSurf,
+    VPHAL_CSPACE colorSpace, uint32_t chromaSiting, RECT rcSrc, RECT rcDst, VPHAL_SURFACE_TYPE SurfType, bool updatePlaneOffset)
+{
+    if (Mos_ResourceIsNull(&osSurf.OsResource))
+    {
+        return nullptr;
+    }
+
+    VP_SURFACE *surf = MOS_New(VP_SURFACE);
+
+    if (nullptr == surf)
+    {
+        return nullptr;
+    }
+
+    MOS_SURFACE *osSurface = MOS_New(MOS_SURFACE);
+
+    if (nullptr == osSurface)
+    {
+        MOS_Delete(surf);
+        return nullptr;
+    }
+
+    *osSurface = osSurf;
+    if (updatePlaneOffset)
+    {
+        UpdateSurfacePlaneOffset(*osSurface);
+    }
+
+    MOS_ZeroMemory(surf, sizeof(VP_SURFACE));
+    surf->osSurface         = osSurface;
+    surf->isResourceOwner   = false;
+    surf->ColorSpace        = colorSpace;               //!< Color Space
+    surf->ChromaSiting      = chromaSiting;             //!< ChromaSiting
+    surf->rcSrc             = rcSrc;                    //!< Source rectangle
+    surf->rcDst             = rcDst;                    //!< Destination rectangle
+    surf->rcMaxSrc          = rcSrc;                    //!< Max source rectangle
+    surf->SurfType          = SurfType;                 //!< Surface type (context). Not in use for internal surface
+    surf->SampleType        = SAMPLE_PROGRESSIVE;       //!<  Interlaced/Progressive sample type.
 
     return surf;
 }
@@ -559,7 +664,8 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     uint32_t                height,
     bool                    compressible,
     MOS_RESOURCE_MMC_MODE   compressionMode,
-    bool                    &allocated)
+    bool                    &allocated,
+    MOS_HW_RESOURCE_DEF     resUsageType)
 {
     MOS_STATUS              eStatus = MOS_STATUS_SUCCESS;
     VPHAL_GET_SURFACE_INFO  info;
@@ -596,6 +702,7 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     allocParams.CompressionMode = compressionMode;
     allocParams.pBufName        = surfaceName;
     allocParams.dwArraySize     = 1;
+    allocParams.ResUsageType    = resUsageType;
 
     // Delete resource if already allocated
     FreeResource(&surface->OsResource);
@@ -625,7 +732,8 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
         bool                    compressible,
         MOS_RESOURCE_MMC_MODE   compressionMode,
         bool                    &allocated,
-        bool                    zeroOnAllocate)
+        bool                    zeroOnAllocate,
+        MOS_HW_RESOURCE_DEF     resUsageType)
 {
     MOS_STATUS              eStatus = MOS_STATUS_SUCCESS;
     MOS_ALLOC_GFXRES_PARAMS allocParams = {};
@@ -669,6 +777,7 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     allocParams.CompressionMode = compressionMode;
     allocParams.pBufName        = surfaceName;
     allocParams.dwArraySize     = 1;
+    allocParams.ResUsageType    = resUsageType;
 
     surface = AllocateVpSurface(allocParams, zeroOnAllocate);
     VP_PUBLIC_CHK_NULL_RETURN(surface);
@@ -891,6 +1000,15 @@ MOS_STATUS VpAllocator::SyncOnResource(
     VP_PUBLIC_CHK_NULL_RETURN(m_allocator);
 
     return (m_allocator->SyncOnResource(osResource, bWriteOperation));
+}
+
+MOS_STATUS VpAllocator::UpdateResourceUsageType(
+    PMOS_RESOURCE           osResource,
+    MOS_HW_RESOURCE_DEF     resUsageType)
+{
+    VP_PUBLIC_CHK_NULL_RETURN(m_allocator);
+
+    return (m_allocator->UpdateResourceUsageType(osResource, resUsageType));
 }
 
 bool VP_SURFACE::IsEmpty()

@@ -38,25 +38,27 @@ typedef DeviceInfoFactory<LinuxDeviceInit> DeviceInit;
 
 static struct LinuxCodecInfo tglCodecInfo =
 {
-    .avcDecoding        = 1,
-    .mpeg2Decoding      = 1,
-    .vp8Decoding        = 0,
-    .vc1Decoding        = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .jpegDecoding       = 1,
-    .avcEncoding        = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .mpeg2Encoding      = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .hevcDecoding       = 1,
-    .hevcEncoding       = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .jpegEncoding       = 1,
-    .avcVdenc           = 1,
-    .vp9Decoding        = 1,
-    .hevc10Decoding     = 1,
-    .vp9b10Decoding     = 1,
-    .hevc10Encoding     = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .hevc12Encoding     = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
-    .vp8Encoding        = 0,
-    .hevcVdenc          = 1,
-    .vp9Vdenc           = 1,
+    .avcDecoding    = 1,
+    .mpeg2Decoding  = 1,
+    .vp8Decoding    = 0,
+    .vc1Decoding    = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .jpegDecoding   = 1,
+    .avcEncoding    = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .mpeg2Encoding  = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .hevcDecoding   = 1,
+    .hevcEncoding   = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .jpegEncoding   = 1,
+    .avcVdenc       = 1,
+    .vp9Decoding    = 1,
+    .hevc10Decoding = 1,
+    .vp9b10Decoding = 1,
+    .hevc10Encoding = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .hevc12Encoding = SET_STATUS_BY_FULL_OPEN_SOURCE(1, 0),
+    .vp8Encoding    = 0,
+    .hevcVdenc      = 1,
+    .vp9Vdenc       = 1,
+    .adv0Decoding   = 1,
+    .adv1Decoding   = 1,
 };
 
 static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
@@ -72,6 +74,13 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
     if (drvInfo->hasBsd)
     {
         LinuxCodecInfo *codecInfo = &tglCodecInfo;
+
+        if (devInfo->productFamily == IGFX_TIGERLAKE_LP &&
+            drvInfo->devRev == 0)
+        {
+            codecInfo->adv0Decoding = 0;
+            codecInfo->adv1Decoding = 0;
+        }
 
         MEDIA_WR_SKU(skuTable, FtrAVCVLDLongDecoding, codecInfo->avcDecoding);
         MEDIA_WR_SKU(skuTable, FtrMPEG2VLDDecoding, codecInfo->mpeg2Decoding);
@@ -94,6 +103,8 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
         MEDIA_WR_SKU(skuTable, FtrIntelVP9VLDProfile0Decoding8bit420, codecInfo->vp9Decoding);
         MEDIA_WR_SKU(skuTable, FtrVP9VLD10bProfile2Decoding, codecInfo->vp9b10Decoding);
         MEDIA_WR_SKU(skuTable, FtrIntelVP9VLDProfile2Decoding, codecInfo->vp9b10Decoding);
+        MEDIA_WR_SKU(skuTable, FtrIntelAV1VLDDecoding8bit420, codecInfo->adv0Decoding);
+        MEDIA_WR_SKU(skuTable, FtrIntelAV1VLDDecoding10bit420, codecInfo->adv1Decoding);
 
         /* VP8 enc */
         MEDIA_WR_SKU(skuTable, FtrEncodeVP8, codecInfo->vp8Encoding);
@@ -146,7 +157,6 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
         /* VP9 VDENC 10Bit 420/444 */
         MEDIA_WR_SKU(skuTable, FtrEncodeVP9Vdenc10bit420, codecInfo->vp9Vdenc);
         MEDIA_WR_SKU(skuTable, FtrEncodeVP9Vdenc10bit444, codecInfo->vp9Vdenc);
-
     }
 
     MEDIA_WR_SKU(skuTable, FtrEnableMediaKernels, drvInfo->hasHuc);
@@ -182,7 +192,7 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
     MEDIA_WR_SKU(skuTable, FtrEDram, devInfo->hasERAM);
 
     /* Virtual VDBOX ring is used on Gen12 */
-    MEDIA_WR_SKU(skuTable, FtrVcs2,  0);
+    MEDIA_WR_SKU(skuTable, FtrVcs2, 0);
 
     MEDIA_WR_SKU(skuTable, FtrSingleVeboxSlice, 1);
     if (devInfo->SubSliceCount >= GEN12_VEBOX2_SUBSLICES)
@@ -216,7 +226,8 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENABLE_VEBOX_SCALABILITY_MODE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        nullptr);
     if (userFeatureData.i32Data)
     {
         MEDIA_WR_SKU(skuTable, FtrContextBasedScheduling, 1);
@@ -224,14 +235,15 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
 
     MEDIA_WR_SKU(skuTable, FtrTileY, 1);
 
-    bool disableMMC     = false;
+    bool disableMMC = false;
     MEDIA_WR_SKU(skuTable, FtrE2ECompression, 1);
     // Disable MMC for all components if set reg key
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DISABLE_MMC_ID,
-        &userFeatureData);
+        &userFeatureData,
+        nullptr);
     if (userFeatureData.bData)
     {
         disableMMC = true;
@@ -255,8 +267,8 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
 }
 
 static bool InitTglMediaWa(struct GfxDeviceInfo *devInfo,
-                             MediaWaTable *waTable,
-                             struct LinuxDriverInfo *drvInfo)
+                            MediaWaTable *waTable,
+                            struct LinuxDriverInfo *drvInfo)
 {
     if ((devInfo == nullptr) || (waTable == nullptr) || (drvInfo == nullptr))
     {
@@ -279,9 +291,14 @@ static bool InitTglMediaWa(struct GfxDeviceInfo *devInfo,
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AUX_TABLE_16K_GRANULAR_ID,
-        &userFeatureData);
+        &userFeatureData,
+        nullptr);
 
     MEDIA_WR_WA(waTable, WaDummyReference, 1);
+
+    /*software wa to add a dummy workload in front of
+      normal workload per batch buffer*/
+    MEDIA_WR_WA(waTable, Wa_1508208842, 1);
 
     MEDIA_WR_WA(waTable, Wa16KInputHeightNV12Planar420, 1);
 
@@ -306,8 +323,143 @@ static bool InitTglMediaWa(struct GfxDeviceInfo *devInfo,
         MEDIA_WR_WA(waTable, WaDisableVPMmc, 1);
     }
 
+    /*software wa to use frame based decoding for AV1 decode*/
+    MEDIA_WR_WA(waTable, Wa_1409820462, 1);
+
+    /*software wa to use huc copy for init aux table for MFX*/
+    MEDIA_WR_WA(waTable, Wa_22010493002, 1);
+
     return true;
 }
+
+
+#ifdef IGFX_GEN12_DG1_SUPPORTED
+static bool InitDG1MediaSku(struct GfxDeviceInfo *devInfo,
+                              MediaFeatureTable *skuTable,
+                           struct LinuxDriverInfo *drvInfo)
+{
+    if (!InitTglMediaSku(devInfo, skuTable, drvInfo))
+    {
+        return false;
+    }
+    MEDIA_WR_SKU(skuTable, FtrLocalMemory, 1);
+
+    if (drvInfo->devRev > 0)
+    {
+        MEDIA_WR_SKU(skuTable, FtrAV1VLDLSTDecoding, 1);
+    }
+
+    bool enableCodecMMC = false;
+    bool enableVPMMC    = false;
+
+    // Disable MMC for all components if set reg key
+    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __VPHAL_ENABLE_MMC_ID,
+        &userFeatureData,
+        nullptr);
+    if (userFeatureData.bData)
+    {
+        enableVPMMC = true;
+    }
+
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __MEDIA_USER_FEATURE_VALUE_CODEC_MMC_ENABLE_ID,
+        &userFeatureData,
+        nullptr);
+    if (userFeatureData.bData)
+    {
+        enableCodecMMC = true;
+    }
+
+    if (!enableCodecMMC && !enableVPMMC)
+    {
+        MEDIA_WR_SKU(skuTable, FtrE2ECompression, 0);
+    }
+
+    return true;
+}
+
+static bool InitDG1MediaWa(struct GfxDeviceInfo *devInfo,
+                                   MediaWaTable *waTable,
+                         struct LinuxDriverInfo *drvInfo)
+{
+    if (!InitTglMediaWa(devInfo, waTable, drvInfo))
+    {
+        DEVINFO_ERROR("InitMediaWA failed\n");
+        return false;
+    }
+
+    /* Turn off MMC for codec, need to remove once turn it on */
+    MEDIA_WR_WA(waTable, WaDisableCodecMmc, 1);
+
+    /* Turn off MMC for VPP, need to remove once turn it on */
+    MEDIA_WR_WA(waTable, WaDisableVPMmc, 1);
+
+    /* Enable VPP copy */
+    MEDIA_WR_WA(waTable, WaEnableVPPCopy, 1);
+    return true;
+}
+
+static struct LinuxDeviceInit dg1DeviceInit =
+{
+     .productFamily    = IGFX_DG1,
+     .InitMediaFeature = InitDG1MediaSku,
+     .InitMediaWa      = InitDG1MediaWa,
+};
+
+static bool dg1DeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
+    RegisterDevice(IGFX_DG1, &dg1DeviceInit);
+
+#endif
+
+#ifdef IGFX_GEN12_RKL_SUPPORTED
+static bool InitRKLMediaSku(struct GfxDeviceInfo *devInfo,
+    MediaFeatureTable *                           skuTable,
+    struct LinuxDriverInfo *                      drvInfo)
+{
+    if (!InitTglMediaSku(devInfo, skuTable, drvInfo))
+    {
+        return false;
+    }
+
+    if (devInfo->eGTType == GTTYPE_GT0_5)
+    {
+        MEDIA_WR_SKU(skuTable, FtrGT0_5, 1);
+    }
+
+    MEDIA_WR_SKU(skuTable, FtrSfcScalability, 0);
+
+    return true;
+}
+
+static bool InitRKLMediaWa(struct GfxDeviceInfo *devInfo,
+    MediaWaTable *                               waTable,
+    struct LinuxDriverInfo *                     drvInfo)
+{
+    if (!InitTglMediaWa(devInfo, waTable, drvInfo))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static struct LinuxDeviceInit rklDeviceInit =
+{
+    .productFamily    = IGFX_ROCKETLAKE,
+    .InitMediaFeature = InitRKLMediaSku,
+    .InitMediaWa      = InitRKLMediaWa,
+};
+
+static bool rklDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
+    RegisterDevice(IGFX_ROCKETLAKE, &rklDeviceInit);
+
+#endif
 
 static struct LinuxDeviceInit tgllpDeviceInit =
 {
@@ -318,3 +470,5 @@ static struct LinuxDeviceInit tgllpDeviceInit =
 
 static bool tgllpDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
     RegisterDevice(IGFX_TIGERLAKE_LP, &tgllpDeviceInit);
+
+

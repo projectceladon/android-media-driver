@@ -32,6 +32,8 @@
 #include <sstream>
 #include <chrono>
 #endif
+#include "mos_os.h"
+
 #include <fcntl.h>     //open
 
 #include <malloc.h>    // For memalign
@@ -300,7 +302,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Linux Performance Tag"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_ID,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_ID,
         "Perf Profiler Enable",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -309,7 +311,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_BOOL,
         "0",
         "Perf Profiler Enable Control Flag"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_FE_BE_TIMING,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_FE_BE_TIMING,
         "Perf Profiler FE BE timing measurement",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -318,7 +320,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_BOOL,
         "0",
         "Perf Profiler FE and BE Timing Measurement Flag"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_OUTPUT_FILE,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_OUTPUT_FILE,
         "Perf Profiler Output File Name",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -327,7 +329,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_STRING,
         "Perf_DATA_00_00.bin",
         "Performance Profiler Output File Name"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_BUFFER_SIZE,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_BUFFER_SIZE,
         "Perf Profiler Buffer Size",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -336,7 +338,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "10000000",
         "Performance Profiler Buffer Size"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_TIMER_REG,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_TIMER_REG,
         "Perf Profiler Timer Reg",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -345,7 +347,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Timer Register"),
-        MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_MULTI_PROCESS,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_MULTI_PROCESS,
         "Perf Profiler Multi Process Support",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -354,7 +356,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Multi Process Support"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_1,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_1,
         "Perf Profiler Register 1",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -363,7 +365,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_2,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_2,
         "Perf Profiler Register 2",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -372,7 +374,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_3,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_3,
         "Perf Profiler Register 3",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -381,7 +383,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_4,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_4,
         "Perf Profiler Register 4",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -390,7 +392,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_5,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_5,
         "Perf Profiler Register 5",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -399,7 +401,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_6,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_6,
         "Perf Profiler Register 6",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -408,7 +410,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_7,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_7,
         "Perf Profiler Register 7",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -417,7 +419,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Performance Profiler Memory Information Register"),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_8,
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_8,
         "Perf Profiler Register 8",
         __MEDIA_USER_FEATURE_SUBKEY_PERFORMANCE,
         __MEDIA_USER_FEATURE_SUBKEY_REPORT,
@@ -741,24 +743,6 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Enables/Disables Old Mode Cost tables for AVC."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_MB_SLICE_THRESHOLD_ID,
-        "VDENC Encode MB Slice Threshold",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "12",
-        "Sets the VDENC MB slice threshold."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_SLICE_THRESHOLD_TABLE_ID,
-        "Use VDENC Slice Threshold Table",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "0",
-        "Sets the VDENC slice threshold table."),
     MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_TAIL_INSERTION_DELAY_COUNT_ID,
         "VDENC Encode Tail Insertion Delay Count",
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -768,24 +752,6 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "1500",
         "Sets the VDENC Delay count."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_THRESHOLD_I_SLICE_SIZE_MINUS_ID,
-        "VDENC Encode Threshold I Slice Size Minus",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "500",
-        "Sets the VDENC I SLICE threshold."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_THRESHOLD_P_SLICE_SIZE_MINUS_ID,
-        "VDENC Encode Threshold P Slice Size Minus",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "500",
-        "Sets the VDENC P SLICE threshold."),
     MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_VDENC_CRE_PREFETCH_ENABLE_ID,
         "AVC VDEnc CRE Prefetch Enable",
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -1308,6 +1274,33 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Used to report if ENCODE BRC SW Simulation is in use."),
+    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_ID,
+        "LA SW Simulation",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "Encode",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_INT32,
+        "0",
+        "Used to enable lookahead SW simulation Mode"),
+    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_PATH_ID,
+        "LA SW Simulation Modules Path",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "Encode",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_STRING,
+        "0",
+        "Used to enable ENCODE lookahead SW simulation Custom Path"),
+    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_IN_USE_ID,
+        "LA SW Simulation In Use",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "Report",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_INT32,
+        "0",
+        "Used to report if ENCODE lookahead SW Simulation is in use."),
     MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_ACQP_ENABLE_ID,
         "HEVC VDEnc ACQP Enable",
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -2291,6 +2284,15 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Reports out whether codec row store cache is enabled or not."),
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_FORCE_AV1_TILE_BASED_DECODE_ID,
+        "Force Av1 Tile Based Decode",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "Codec",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_INT32,
+        "0",
+        "If enabled, av1 decode will be forced to tile based submission mode."),
 #endif // (_DEBUG || _RELEASE_INTERNAL
     MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_STATUS_REPORTING_ENABLE_ID,
         "Status Reporting",
@@ -2590,17 +2592,17 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT64,
         "0",
         "Allows different MMC subcomponents to have different debug levels. "),
-    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_MESSAGE_BLT_TAG_ID,
-        __MOS_USER_FEATURE_KEY_MESSAGE_BLT_TAG,
+    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_MESSAGE_MCPY_TAG_ID,
+        __MOS_USER_FEATURE_KEY_MESSAGE_MCPY_TAG,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         "MOS",
         MOS_USER_FEATURE_TYPE_USER,
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         __MOS_USER_FEATURE_KEY_MESSAGE_DEFAULT_VALUE_STR,
-        "Enables messages and/or asserts for all of BLT "),
-    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_BY_SUB_COMPONENT_BLT_ID,
-        __MOS_USER_FEATURE_KEY_BY_SUB_COMPONENT_BLT,
+        "Enables messages and/or asserts for all of MediaCopy "),
+    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_BY_SUB_COMPONENT_MCPY_ID,
+        __MOS_USER_FEATURE_KEY_BY_SUB_COMPONENT_MCPY,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         "MOS",
@@ -2608,15 +2610,15 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "If enabled, will allow the subcomponent tags to take effect."),
-    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_SUB_COMPONENT_BLT_TAG_ID,
-        __MOS_USER_FEATURE_KEY_SUB_COMPONENT_BLT_TAG,
+    MOS_DECLARE_UF_KEY(__MOS_USER_FEATURE_KEY_SUB_COMPONENT_MCPY_TAG_ID,
+        __MOS_USER_FEATURE_KEY_SUB_COMPONENT_MCPY_TAG,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
         "MOS",
         MOS_USER_FEATURE_TYPE_USER,
         MOS_USER_FEATURE_VALUE_TYPE_UINT64,
         "0",
-        "Allows different BLT subcomponents to have different debug levels. "),
+        "Allows different MediaCopy subcomponents to have different debug levels. "),
 #endif // MOS_MESSAGES_ENABLED
     MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_HEVC_SF_2_DMA_SUBMITS_ENABLE_ID,
         "Enable HEVC SF 2 DMA Submits",
@@ -2870,6 +2872,15 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "Set debug override for mos virtual engine interface for compute CS."),
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_MCPY_MODE_ID,
+            "MediaCopy Mode",
+            __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+            __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+            "MCPY",
+            MOS_USER_FEATURE_TYPE_USER,
+            MOS_USER_FEATURE_VALUE_TYPE_STRING,
+            "",
+            "For Notify which Media Copy Engine used"),
     MOS_DECLARE_UF_KEY(__VPHAL_VEBOX_OUTPUTPIPE_MODE_ID,
         "VPOutputPipe Mode",
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -3115,6 +3126,24 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "For debugging purpose. 0 is to use default setting, 1 means FP32 mode, 2 means Hybrid mode, 3 means FP16 mode"),
+    MOS_DECLARE_UF_KEY(__VPHAL_SUPER_RESOLUTION_SCENARIO_ID,
+        "Super Resolution Scenario",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "VP",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
+        "0",
+        "For debugging purpose. 0 is to use default setting, 1 means DN + SR"),
+    MOS_DECLARE_UF_KEY(__VPHAL_FORCE_TO_ENABLE_SR_ID,
+        "ForceToEnableSR",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "VP",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_BOOL,
+        "0",
+        "For debugging purpose. true to force enabling SR"),
     MOS_DECLARE_UF_KEY(__VPHAL_ENABLE_SUPER_RESOLUTION_EDSR_ID,
         "Enable VP Super Resolution EDSR",
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -3300,6 +3329,15 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_UINT32,
         "0",
         "VP Enable Compute Context"),
+    MOS_DECLARE_UF_KEY(__VPHAL_DISPLAY_COLORIMETRIC_CONTROL_ID,
+        "VP Display Colorimetric Control",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "VP",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
+        "0",
+        "VP Display Colorimetric Control"),
 #endif
     MOS_DECLARE_UF_KEY_DBGONLY(__MOS_USER_FEATURE_KEY_VP_CAPS_FF_OVERRIDE_ID,
         "VP_CAPS_FF_OVERRIDE",
@@ -3707,34 +3745,7 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Reports out whether indirect state heap invalid. This key is not valid on Linux."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENABLE_SW_BACK_ANNOTATION_ID,
-        "Encode Enable SW Back Annotation",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "1",
-        "Encode Enable SW Back Annotation."),
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENABLE_CC_STITCHING_ID,
-        "Encode Enable CC Stitching",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "0",
-        "Encode Enable CC Stitching."),
 #if (_DEBUG || _RELEASE_INTERNAL)
-    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_ENABLE_SW_STITCHING_ID,
-        "Encode Enable SW Stitching",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "Encode",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "0",
-        "Encode Enable SW Stitching."),
     MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_ALLOC_MEMORY_FAIL_SIMULATE_MODE_ID,
         __MEDIA_USER_FEATURE_VALUE_ALLOC_MEMORY_FAIL_SIMULATE_MODE,
         __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
@@ -3808,6 +3819,42 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureDescFields[__MOS_USER_FEATURE_KEY_MA
         MOS_USER_FEATURE_VALUE_TYPE_INT32,
         "0",
         "Eanble Apogeios Resource virtual address dump."),
+    MOS_DECLARE_UF_KEY_DBGONLY(__MEDIA_USER_FEATURE_VALUE_RA_MODE_ENABLE_ID,
+        "RA Mode Enable",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "MOS",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_INT32,
+        "0",
+        "Eanble RA Mode. 1: enable, 0: disable."),
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_INTER_FRAME_MEMORY_NINJA_START_COUNTER_ID,
+        "InterFrameNinjaStartCounter",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "MOS",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
+        "0",
+        "Inter frame ninja start counter"),
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_INTER_FRAME_MEMORY_NINJA_END_COUNTER_ID,
+        "InterFrameNinjaEndCounter",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "MOS",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
+        "0",
+        "Inter frame ninja counter"),
+    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_LOCAL_MEMORY_LEVEL_SWITCH_ID,
+        "EnableLocalMemoryLevelSwitch",
+        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
+        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
+        "MOS",
+        MOS_USER_FEATURE_TYPE_USER,
+        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
+        "2",
+        "Enable local memory level switch.")
 };
 
 PMOS_USER_FEATURE_VALUE const MosUtilities::m_mosUserFeatureDescFields = MOSUserFeatureDescFields;
@@ -3833,9 +3880,11 @@ uint32_t MosAllocMemoryFailSimulateAllocCounter;
 //! \brief    Init simulate random memory allocation fail flag
 //! \details  init MosSimulateRandomAllocMemoryFailFlag according user feature value:
 //!           __MEDIA_USER_FEATURE_VALUE_SIMULATE_RANDOM_ALLOC_MEMORY_FAIL
+//! \param    [in] mosCtx
+//!           os device ctx handle
 //! \return   void
 //!
-void MOS_InitAllocMemoryFailSimulateFlag()
+void MOS_InitAllocMemoryFailSimulateFlag(MOS_CONTEXT_HANDLE mosCtx)
 {
     MOS_USER_FEATURE_VALUE_DATA userFeatureValueData;
     MOS_STATUS             eStatus = MOS_STATUS_SUCCESS;
@@ -3851,7 +3900,8 @@ void MOS_InitAllocMemoryFailSimulateFlag()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ALLOC_MEMORY_FAIL_SIMULATE_MODE_ID,
-        &userFeatureValueData);
+        &userFeatureValueData,
+        mosCtx);
 
     if ((userFeatureValueData.u32Data == MEMORY_ALLOC_FAIL_SIMULATE_MODE_DEFAULT) ||
         (userFeatureValueData.u32Data == MEMORY_ALLOC_FAIL_SIMULATE_MODE_RANDOM) ||
@@ -3871,7 +3921,8 @@ void MOS_InitAllocMemoryFailSimulateFlag()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ALLOC_MEMORY_FAIL_SIMULATE_FREQ_ID,
-        &userFeatureValueData);
+        &userFeatureValueData,
+        mosCtx);
 
     if ((userFeatureValueData.u32Data >= MIN_MEMORY_ALLOC_FAIL_FREQ) &&
         (userFeatureValueData.u32Data <= MAX_MEMORY_ALLOC_FAIL_FREQ))
@@ -3895,7 +3946,8 @@ void MOS_InitAllocMemoryFailSimulateFlag()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ALLOC_MEMORY_FAIL_SIMULATE_HINT_ID,
-        &userFeatureValueData);
+        &userFeatureValueData,
+        mosCtx);
 
     if (userFeatureValueData.u32Data <= MosAllocMemoryFailSimulateFreq)
     {
@@ -3962,36 +4014,6 @@ bool MOS_SimulateAllocMemoryFail(
     return bSimulateAllocFail;
 }
 #endif  //(_DEBUG || _RELEASE_INTERNAL)
-
-
-//!
-//! \brief    Init Function for MOS utilities
-//! \details  Initial MOS utilities related structures, and only execute once for multiple entries
-//! \param    [in] userFeatureKeyPathInfo
-//!           user feature key path info
-//! \return   MOS_STATUS
-//!           Returns one of the MOS_STATUS error codes if failed,
-//!           else MOS_STATUS_SUCCESS
-//!
-MOS_STATUS MOS_utilities_init(PMOS_USER_FEATURE_KEY_PATH_INFO userFeatureKeyPathInfo)
-{
-    MOS_STATUS                  eStatus = MOS_STATUS_SUCCESS;
-
-    MOS_OS_FUNCTION_ENTER;
-    return MosUtilities::MosUtilitiesInit(userFeatureKeyPathInfo);
-}
-
-//!
-//! \brief    Close Function for MOS utilities
-//! \details  close/remove MOS utilities related structures, and only execute once for multiple entries
-//! \return   MOS_STATUS
-//!           Returns one of the MOS_STATUS error codes if failed,
-//!           else MOS_STATUS_SUCCESS
-//!
-MOS_STATUS MOS_utilities_close()
-{
-    return MosUtilities::MosUtilitiesClose();
-}
 
 //!
 //! \brief    Wrapper for user feature value string free(). Performs error checking.
@@ -4436,7 +4458,7 @@ MOS_FUNC_EXPORT MOS_STATUS MOS_EXPORT_DECL DumpUserFeatureKeyDefinitionsMedia()
 
     // Init MOS User Feature Key from mos desc table
     MOS_OS_CHK_STATUS(MOS_DeclareUserFeatureKeysForAllDescFields());
-    MOS_OS_CHK_STATUS(MOS_GenerateUserFeatureKeyXML());
+    MOS_OS_CHK_STATUS(MOS_GenerateUserFeatureKeyXML(nullptr));
 finish:
     return    eStatus;
 }
@@ -4614,25 +4636,9 @@ MOS_STATUS MOS_WriteOneUserFeatureGroupToXML(MOS_USER_FEATURE_VALUE   UserFeatur
     return eStatus;
 }
 
-//!
-//! \brief    Generate a User Feature Keys XML file according to user feature keys table in MOS
-//! \details  Generate a User Feature Keys XML files according to MOSUserFeatureDescFields
-//! \return   MOS_STATUS
-//!           Returns one of the MOS_STATUS error codes if failed,
-//!           else MOS_STATUS_SUCCESS
-//!
-MOS_STATUS MOS_GenerateUserFeatureKeyXML()
+MOS_STATUS MOS_GenerateUserFeatureKeyXML(MOS_CONTEXT_HANDLE mosCtx)
 {
-    char                                sOutBuf[MAX_USER_FEATURE_FIELD_LENGTH];
-    uint32_t                            uiIndex=0;
-    MOS_USER_FEATURE_VALUE              UserFeatureFilter = __NULL_USER_FEATURE_VALUE__;
-    MOS_USER_FEATURE_VALUE_DATA         UserFeatureData;
-    const char * const                  FilterGroups[] = { "Codec", "Decode", "Encode", "CP", "General", "MOS",
-                                                           "Report", "VP", "Media", "Secure HEVC Encode", "MDF"};
-    uint32_t                            FilterGroupsCount = sizeof(FilterGroups) / sizeof(FilterGroups[0]);
-    MOS_STATUS                          eStatus = MOS_STATUS_SUCCESS;
-
-    return MosUtilities::MosGenerateUserFeatureKeyXML();
+    return MosUtilities::MosGenerateUserFeatureKeyXML(mosCtx);
 }
 
 //!
@@ -4793,7 +4799,7 @@ MOS_STATUS MOS_AssignUserFeatureValueData(
         pDstData->StringData.uMaxSize = MOS_USER_CONTROL_MAX_DATA_SIZE;
         if ((pData != nullptr) && (strlen(pData) != 0))
         {
-            pDstData->StringData.uSize = (uint32_t)strlen(pData);
+            pDstData->StringData.uSize = (uint32_t)strlen(pData) + 1;
             if (pDstData->StringData.uSize > pDstData->StringData.uMaxSize)
             {
                 pDstData->StringData.uSize = pDstData->StringData.uMaxSize;
@@ -4806,7 +4812,7 @@ MOS_STATUS MOS_AssignUserFeatureValueData(
             }
             eStatus = MOS_SecureStrcpy(
                 pDstData->StringData.pStringData,
-                pDstData->StringData.uSize + 1,
+                pDstData->StringData.uSize,
                 (char *)pData);
         }
         break;
@@ -5408,7 +5414,8 @@ static MOS_STATUS MOS_UserFeature_Open(
     MOS_USER_FEATURE_TYPE KeyType,
     const char            *pSubKey,
     uint32_t              dwAccess,
-    void                  **pUFKey)
+    void                  **pUFKey,
+    MOS_USER_FEATURE_KEY_PATH_INFO *ufInfo = nullptr)
 {
     MOS_STATUS  eStatus;
     void        *RootKey = 0;
@@ -5435,7 +5442,8 @@ static MOS_STATUS MOS_UserFeature_Open(
                              pSubKey,
                              0,
                              dwAccess,
-                             pUFKey)) !=  MOS_STATUS_SUCCESS)
+                             pUFKey,
+                             ufInfo)) !=  MOS_STATUS_SUCCESS)
     {
         MOS_OS_NORMALMESSAGE("Unable to open user feature key %s.", pSubKey);
     }
@@ -6013,6 +6021,8 @@ static MOS_STATUS MOS_UserFeature_WriteValuePrimitive(
 //!           value of enum type in MOS_USER_FEATURE_VALUE_TYPE. declares the user feature key to be readed
 //! \param    [in/out] pUserData
 //!           Pointer to User Feature Data
+//! \param    [in] mosCtx
+//!           Pointer to ddi device ctx
 //! \return   MOS_STATUS
 //!           Returns one of the MOS_STATUS error codes if failed,
 //!           else MOS_STATUS_SUCCESS
@@ -6025,21 +6035,19 @@ static MOS_STATUS MOS_UserFeature_WriteValuePrimitive(
 //!                                          No default value or User Feature Key value return
 //! 
 //!
-#ifdef  __MOS_USER_FEATURE_WA_
 MOS_STATUS MOS_UserFeature_ReadValue_ID(
-#else
-MOS_STATUS MOS_UserFeature_ReadValue(
-#endif
     PMOS_USER_FEATURE_INTERFACE     pOsUserFeatureInterface,
     uint32_t                        ValueID,
-    PMOS_USER_FEATURE_VALUE_DATA    pValueData)
+    PMOS_USER_FEATURE_VALUE_DATA    pValueData,
+    MOS_CONTEXT_HANDLE              mosCtx)
 {
     return MosUtilities::MosUserFeatureReadValueID(
         pOsUserFeatureInterface,
         ValueID,
-        pValueData);
-
+        pValueData,
+        mosCtx);
 }
+
 //!
 //! \brief    Lookup the user feature value name associated with the ID
 //! \param    [in] ValueId
@@ -6091,19 +6099,17 @@ const char* MOS_UserFeature_LookupWritePath(
 //!           Returns one of the MOS_STATUS error codes if failed,
 //!           else MOS_STATUS_SUCCESS
 //!
-#ifdef  __MOS_USER_FEATURE_WA_
 MOS_STATUS MOS_UserFeature_WriteValues_ID(
-#else
-MOS_STATUS MOS_UserFeature_WriteValues(
-#endif
     PMOS_USER_FEATURE_INTERFACE             pOsUserFeatureInterface,
     PMOS_USER_FEATURE_VALUE_WRITE_DATA      pWriteValues,
-    uint32_t                                uiNumOfValues)
+    uint32_t                                uiNumOfValues,
+    MOS_CONTEXT_HANDLE                      mosCtx)
 {
     return MosUtilities::MosUserFeatureWriteValuesID(
         pOsUserFeatureInterface,
         pWriteValues,
-        uiNumOfValues);
+        uiNumOfValues,
+        mosCtx);
 }
 
 //!
@@ -6120,7 +6126,8 @@ MOS_STATUS MOS_UserFeature_WriteValues(
 //!
 MOS_STATUS MOS_UserFeature_EnableNotification(
     PMOS_USER_FEATURE_INTERFACE            pOsUserFeatureInterface,
-    PMOS_USER_FEATURE_NOTIFY_DATA          pNotification)
+    PMOS_USER_FEATURE_NOTIFY_DATA          pNotification,
+    MOS_CONTEXT_HANDLE                     mosCtx)
 {
     PMOS_USER_FEATURE_NOTIFY_DATA_COMMON    pNotifyCommon;
     int32_t                                 bResult;
@@ -6148,6 +6155,8 @@ MOS_STATUS MOS_UserFeature_EnableNotification(
     }
     pNotifyCommon = (PMOS_USER_FEATURE_NOTIFY_DATA_COMMON)pNotification->pHandle;
 
+    MOS_USER_FEATURE_KEY_PATH_INFO *ufInfo = Mos_GetDeviceUfPathInfo((PMOS_CONTEXT)mosCtx);
+
     // Open User Feature for Reading
     if (pNotifyCommon->UFKey == 0)
     {
@@ -6155,7 +6164,8 @@ MOS_STATUS MOS_UserFeature_EnableNotification(
                           pNotification->Type,
                           pNotification->pPath,
                           KEY_READ,
-                          &pNotifyCommon->UFKey)) != MOS_STATUS_SUCCESS)
+                          &pNotifyCommon->UFKey,
+                          ufInfo)) != MOS_STATUS_SUCCESS)
         {
             MOS_OS_ASSERTMESSAGE("Failed to open user feature for reading.");
             return MOS_STATUS_USER_FEATURE_KEY_OPEN_FAILED;

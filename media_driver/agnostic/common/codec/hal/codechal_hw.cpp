@@ -45,7 +45,8 @@ const MOS_SYNC_PARAMS     g_cInitSyncParams =
 CodechalHwInterface::CodechalHwInterface(
     PMOS_INTERFACE    osInterface,
     CODECHAL_FUNCTION codecFunction,
-    MhwInterfaces     *mhwInterfaces)
+    MhwInterfaces     *mhwInterfaces,
+    bool              disableScalability)
 {
     CODECHAL_HW_FUNCTION_ENTER;
 
@@ -72,6 +73,7 @@ CodechalHwInterface::CodechalHwInterface(
     m_renderInterface = mhwInterfaces->m_renderInterface;
 
     m_stateHeapSettings = MHW_STATE_HEAP_SETTINGS();
+    m_disableScalability = disableScalability;
 
     MOS_ZeroMemory(&m_hucDmemDummy, sizeof(m_hucDmemDummy));
     MOS_ZeroMemory(&m_dummyStreamIn, sizeof(m_dummyStreamIn));
@@ -626,6 +628,23 @@ MOS_STATUS CodechalHwInterface::Initialize(
         }
     }
 
+#if (_DEBUG || _RELEASE_INTERNAL)
+    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __MEDIA_USER_FEATURE_VALUE_SSEU_SETTING_OVERRIDE_ID,
+        &userFeatureData,
+        m_osInterface->pOsContext);
+    if (userFeatureData.i32Data != 0xDEADC0DE)
+    {
+        m_numRequestedEuSlicesOverride = userFeatureData.i32Data & 0xFF;              // Bits 0-7
+        m_numRequestedSubSlicesOverride = (userFeatureData.i32Data >> 8) & 0xFF;      // Bits 8-15
+        m_numRequestedEusOverride = (userFeatureData.i32Data >> 16) & 0xFFFF;         // Bits 16-31
+        m_numRequestedOverride = true;
+    }
+#endif
+
     m_enableCodecMmc = !MEDIA_IS_WA(GetWaTable(), WaDisableCodecMmc);
 
     return eStatus;
@@ -821,18 +840,19 @@ MOS_STATUS CodechalHwInterface::WriteSyncTagToResource(
     MOS_UNUSED(syncParams);
 
     MHW_MI_STORE_DATA_PARAMS        params;
-    MOS_RESOURCE                    globalGpuContextSyncTagBuffer;
+    PMOS_RESOURCE                   globalGpuContextSyncTagBuffer = nullptr;
     uint32_t                        offset = 0;
     uint32_t                        value = 0;
 
     CODECHAL_HW_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
         m_osInterface,
-        &globalGpuContextSyncTagBuffer));
+        globalGpuContextSyncTagBuffer));
+    CODECHAL_HW_CHK_NULL_RETURN(globalGpuContextSyncTagBuffer);
 
     offset = m_osInterface->pfnGetGpuStatusTagOffset(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
     value = m_osInterface->pfnGetGpuStatusTag(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
 
-    params.pOsResource = &globalGpuContextSyncTagBuffer;
+    params.pOsResource = globalGpuContextSyncTagBuffer;
     params.dwResourceOffset = offset;
     params.dwValue = value;
 
@@ -1103,10 +1123,20 @@ MOS_STATUS CodechalHwInterface::GetDefaultSSEuSetting(
         return eStatus;
     }
 
-    if (mediaStateType >= CODECHAL_NUM_MEDIA_STATES)
+    if (mediaStateType >= m_numMediaStates)
     {
         return MOS_STATUS_INVALID_PARAMETER;
     }
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    if (m_numRequestedOverride)
+    {
+        m_numRequestedEuSlices = m_numRequestedEuSlicesOverride;
+        m_numRequestedSubSlices = m_numRequestedSubSlicesOverride;
+        m_numRequestedEus = m_numRequestedEusOverride;
+        return eStatus;
+    }
+#endif
 
     CODECHAL_SSEU_SETTING const *ssEutable = m_ssEuTable + mediaStateType;
 
@@ -1131,21 +1161,6 @@ MOS_STATUS CodechalHwInterface::GetDefaultSSEuSetting(
             m_numRequestedEus = ssEutable->ui8NumEUs;
         }
     }
-
-#if (_DEBUG || _RELEASE_INTERNAL)
-    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
-    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_SSEU_SETTING_OVERRIDE_ID,
-        &userFeatureData);
-    if (userFeatureData.i32Data != 0xDEADC0DE)
-    {
-        m_numRequestedEuSlices = userFeatureData.i32Data & 0xFF;              // Bits 0-7
-        m_numRequestedSubSlices = (userFeatureData.i32Data >> 8) & 0xFF;       // Bits 8-15
-        m_numRequestedEus = (userFeatureData.i32Data >> 16) & 0xFFFF;    // Bits 16-31
-    }
-#endif
 
     return eStatus;
 }
@@ -1213,7 +1228,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_CACHE_CNTLREG_OVERRIDE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     l3Overrides->dwCntlReg = (uint32_t)userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1222,7 +1238,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_CACHE_CNTLREG2_OVERRIDE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     l3Overrides->dwCntlReg2 = (uint32_t)userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1231,7 +1248,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_CACHE_CNTLREG3_OVERRIDE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     l3Overrides->dwCntlReg3 = (uint32_t)userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1240,7 +1258,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_CACHE_SQCREG1_OVERRIDE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     l3Overrides->dwSqcReg1 = (uint32_t)userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1249,7 +1268,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_CACHE_SQCREG4_OVERRIDE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     l3Overrides->dwSqcReg4 = (uint32_t)userFeatureData.i32Data;
 
     if (l3CacheConfig->bL3LRA1Reset)
@@ -1260,7 +1280,8 @@ MOS_STATUS CodechalHwInterface::InitL3ControlUserFeatureSettings(
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_ENCODE_L3_LRA_1_REG1_OVERRIDE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         l3Overrides->dwLra1Reg = (uint32_t)userFeatureData.i32Data;
     }
 
@@ -1882,4 +1903,14 @@ bool CodechalHwInterface::UsesRenderEngine(CODECHAL_FUNCTION codecFunction, uint
      }
 
      return false;
+}
+
+MOS_STATUS CodechalHwInterface::GetFilmGrainKernelInfo(
+    uint8_t*& kernelBase,
+    uint32_t& kernelSize)
+{
+    kernelBase = nullptr;
+    kernelSize = 0;
+
+    return MOS_STATUS_SUCCESS;
 }

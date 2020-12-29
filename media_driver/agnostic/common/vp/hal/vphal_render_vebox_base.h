@@ -1338,8 +1338,6 @@ protected:
     //!           reference to Cmd buffer control struct
     //! \param    [out] GenericPrologParams
     //!           Generic prolog params struct to be set
-    //! \param    [out] GpuStatusBuffer
-    //!           GpuStatusBuffer resource to be set
     //! \param    [out] iRemaining
     //!           integer showing initial cmd buffer usage
     //! \return   MOS_STATUS
@@ -1348,7 +1346,6 @@ protected:
     virtual MOS_STATUS VeboxSendVeboxCmd_Prepare(
         MOS_COMMAND_BUFFER                      &CmdBuffer,
         RENDERHAL_GENERIC_PROLOG_PARAMS         &GenericPrologParams,
-        MOS_RESOURCE                            &GpuStatusBuffer,
         int32_t                                 &iRemaining);
 
     //!
@@ -1361,8 +1358,9 @@ protected:
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS VeboxIsCmdParamsValid(
-        const MHW_VEBOX_STATE_CMD_PARAMS        &VeboxStateCmdParams,
-        const MHW_VEBOX_DI_IECP_CMD_PARAMS      &VeboxDiIecpCmdParams);
+        const MHW_VEBOX_STATE_CMD_PARAMS            &VeboxStateCmdParams,
+        const MHW_VEBOX_DI_IECP_CMD_PARAMS          &VeboxDiIecpCmdParams,
+        const VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS  &VeboxSurfaceStateCmdParams);
 
     //!
     //! \brief    Render the Vebox Cmd buffer for VeboxSendVeboxCmd
@@ -1882,6 +1880,13 @@ protected:
     //!
     bool IS_OUTPUT_PIPE_VEBOX_FEASIBLE(PVPHAL_VEBOX_STATE _pVeboxState, PCVPHAL_RENDER_PARAMS _pcRenderParams, PVPHAL_SURFACE _pSrcSurface);
 
+    //!
+    //! \brief    Check for DN only case
+    //! \details  Check for DN only case
+    //! \return   bool
+    //!           Return true if DN only case, otherwise not
+    //!
+    virtual bool            IsDNOnly() = 0;
 };
 
 //!

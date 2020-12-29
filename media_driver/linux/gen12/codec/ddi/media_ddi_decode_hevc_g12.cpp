@@ -495,7 +495,11 @@ MOS_FORMAT DdiDecodeHEVCG12::GetFormat()
                 {
                     Format = Format_Y210;
                 }
+#if VA_CHECK_VERSION(1, 9, 0)
+                else if(rtTbl->pCurrentRT->format == Media_Format_Y216 || rtTbl->pCurrentRT->format == Media_Format_Y212)
+#else
                 else if(rtTbl->pCurrentRT->format == Media_Format_Y216)
+#endif
                 {
                     Format = Format_Y216;
                 }
@@ -507,7 +511,11 @@ MOS_FORMAT DdiDecodeHEVCG12::GetFormat()
                 {
                     Format = Format_Y410;
                 }
+#if VA_CHECK_VERSION(1, 9, 0)
+                else if(rtTbl->pCurrentRT->format == Media_Format_Y416 || rtTbl->pCurrentRT->format == Media_Format_Y412)
+#else
                 else if(rtTbl->pCurrentRT->format == Media_Format_Y416)
+#endif
                 {
                     Format = Format_Y416;
                 }
@@ -529,7 +537,11 @@ MOS_FORMAT DdiDecodeHEVCG12::GetFormat()
             else if (picParams->chroma_format_idc == 2)           //422
             {
                 Format = Format_Y210;
+#if VA_CHECK_VERSION(1, 9, 0)
+                if(rtTbl->pCurrentRT->format == Media_Format_Y216 || rtTbl->pCurrentRT->format == Media_Format_Y212)
+#else
                 if(rtTbl->pCurrentRT->format == Media_Format_Y216)
+#endif
                 {
                     Format = Format_Y216;
                 }
@@ -537,7 +549,11 @@ MOS_FORMAT DdiDecodeHEVCG12::GetFormat()
             else                                                  //444
             {
                 Format = Format_Y410;
+#if VA_CHECK_VERSION(1, 9, 0)
+                if(rtTbl->pCurrentRT->format == Media_Format_Y416 || rtTbl->pCurrentRT->format == Media_Format_Y412)
+#else
                 if(rtTbl->pCurrentRT->format == Media_Format_Y416)
+#endif
                 {
                     Format = Format_Y416;
                 }
@@ -815,10 +831,16 @@ VAStatus DdiDecodeHEVCG12::AllocSliceControlBuffer(
     bufMgr     = &(m_ddiDecodeCtx->BufMgr);
     availSize = m_sliceCtrlBufNum - bufMgr->dwNumSliceControl;
 
+    if(buf->uiNumElements < 1 || buf->iSize < 1)
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+
     if(m_ddiDecodeCtx->bShortFormatInUse)
     {
         if(availSize < buf->uiNumElements)
         {
+            if (buf->iSize / buf->uiNumElements != sizeof(VASliceParameterBufferBase))
+                return VA_STATUS_ERROR_ALLOCATION_FAILED;
+
             newSize   = sizeof(VASliceParameterBufferBase) * (m_sliceCtrlBufNum - availSize + buf->uiNumElements);
             bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufBaseHEVC = (VASliceParameterBufferBase *)realloc(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufBaseHEVC, newSize);
             if(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufBaseHEVC == nullptr)
@@ -837,6 +859,9 @@ VAStatus DdiDecodeHEVCG12::AllocSliceControlBuffer(
         {
             if(availSize < buf->uiNumElements)
             {
+                if (buf->iSize / buf->uiNumElements != sizeof(VASliceParameterBufferHEVC))
+                    return VA_STATUS_ERROR_ALLOCATION_FAILED;
+
                 newSize   = sizeof(VASliceParameterBufferHEVC) * (m_sliceCtrlBufNum - availSize + buf->uiNumElements);
                 bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVC = (VASliceParameterBufferHEVC *)realloc(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVC, newSize);
                 if(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVC == nullptr)
@@ -853,6 +878,9 @@ VAStatus DdiDecodeHEVCG12::AllocSliceControlBuffer(
         {
             if(availSize < buf->uiNumElements)
             {
+                if (buf->iSize / buf->uiNumElements != sizeof(VASliceParameterBufferHEVCExtension))
+                    return VA_STATUS_ERROR_ALLOCATION_FAILED;
+
                 newSize   = sizeof(VASliceParameterBufferHEVCExtension) * (m_sliceCtrlBufNum - availSize + buf->uiNumElements);
                 bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVCRext= (VASliceParameterBufferHEVCExtension*)realloc(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVCRext, newSize);
                 if(bufMgr->Codec_Param.Codec_Param_HEVC.pVASliceParaBufHEVCRext== nullptr)

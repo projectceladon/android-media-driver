@@ -27,39 +27,53 @@
 //!           this file is for the base interface which is shared by all components.
 //!
 #include "vp_feature_manager.h"
+#include "sw_filter_handle.h"
 using namespace vp;
 
 /****************************************************************************************************/
 /*                                      VpFeatureManagerNext                                        */
 /****************************************************************************************************/
 
-VpFeatureManagerNext::VpFeatureManagerNext(VpAllocator &allocator, VpResourceManager *resourceManager, PVP_MHWINTERFACE pHwInterface) :
-    m_vpInterface(pHwInterface, allocator, resourceManager), m_Policy(m_vpInterface)
+VpFeatureManagerNext::VpFeatureManagerNext(VpInterface &vpInterface) :
+    m_vpInterface(vpInterface)
 {
+    m_vpInterface.SetSwFilterHandlers(m_featureHandler);
 }
 
 VpFeatureManagerNext::~VpFeatureManagerNext()
 {
+    UnregisterFeatures();
+    MOS_Delete(m_policy);
 }
 
 MOS_STATUS VpFeatureManagerNext::Initialize()
 {
-    return m_Policy.Initialize();
+    if (!m_policy)
+    {
+        m_policy = MOS_New(Policy, m_vpInterface);
+    }
+    VP_PUBLIC_CHK_NULL_RETURN(m_policy);
+
+    VP_PUBLIC_CHK_STATUS_RETURN(RegisterFeatures());
+    return m_policy->Initialize();
 }
 
-MOS_STATUS VpFeatureManagerNext::CreateHwFilterPipe(VP_PIPELINE_PARAMS &params, HwFilterPipe *&pHwFilterPipe)
+bool VpFeatureManagerNext::IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput)
+{
+    if (m_policy)
+    {
+        return m_policy->IsVeboxSfcFormatSupported(formatInput, formatOutput);
+    }
+
+    return false;
+}
+
+MOS_STATUS VpFeatureManagerNext::CreateHwFilterPipe(SwFilterPipe &swFilterPipe, HwFilterPipe *&pHwFilterPipe)
 {
     MOS_STATUS status = MOS_STATUS_SUCCESS;
     pHwFilterPipe = nullptr;
 
-    SwFilterPipe * pSwFilterPipe = nullptr;
-    status = m_vpInterface.GetSwFilterPipeFactory().Create(params, pSwFilterPipe);
-
-    VP_PUBLIC_CHK_STATUS_RETURN(status);
-    VP_PUBLIC_CHK_NULL_RETURN(pSwFilterPipe);
-
-    status = m_vpInterface.GetHwFilterPipeFactory().Create(*pSwFilterPipe, m_Policy, pHwFilterPipe);
-    m_vpInterface.GetSwFilterPipeFactory().Destory(pSwFilterPipe);
+    status = m_vpInterface.GetHwFilterPipeFactory().Create(swFilterPipe, *m_policy, pHwFilterPipe);
 
     VP_PUBLIC_CHK_STATUS_RETURN(status);
     VP_PUBLIC_CHK_NULL_RETURN(pHwFilterPipe);
@@ -67,12 +81,12 @@ MOS_STATUS VpFeatureManagerNext::CreateHwFilterPipe(VP_PIPELINE_PARAMS &params, 
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS VpFeatureManagerNext::InitPacketPipe(VP_PIPELINE_PARAMS &params,
+MOS_STATUS VpFeatureManagerNext::InitPacketPipe(SwFilterPipe &swFilterPipe,
                 PacketPipe &packetPipe)
 {
     HwFilterPipe *pHwFilterPipe = nullptr;
 
-    MOS_STATUS status = CreateHwFilterPipe(params, pHwFilterPipe);
+    MOS_STATUS status = CreateHwFilterPipe(swFilterPipe, pHwFilterPipe);
 
     VP_PUBLIC_CHK_STATUS_RETURN(status);
     VP_PUBLIC_CHK_NULL_RETURN(pHwFilterPipe);
@@ -95,6 +109,62 @@ MOS_STATUS VpFeatureManagerNext::InitPacketPipe(VP_PIPELINE_PARAMS &params,
 MOS_STATUS VpFeatureManagerNext::UpdateResources(HwFilterPipe &hwFilterPipe)
 {
     return hwFilterPipe.UpdateResources();
+}
+
+MOS_STATUS VpFeatureManagerNext::RegisterFeatures()
+{
+    if (m_isFeatureRegistered)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    // Clear m_featureHandler to avoid any garbage data.
+    UnregisterFeatures();
+
+    // Vebox/Sfc features.
+    SwFilterFeatureHandler *p = MOS_New(SwFilterCscHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeCsc, p));
+
+    p = MOS_New(SwFilterRotMirHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeRotMir, p));
+
+    p = MOS_New(SwFilterScalingHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeScaling, p));
+
+    p = MOS_New(SwFilterDnHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeDn, p));
+
+    p = MOS_New(SwFilterSteHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeSte, p));
+
+    p = MOS_New(SwFilterTccHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeTcc, p));
+
+    p = MOS_New(SwFilterProcampHandler, m_vpInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeProcamp, p));
+
+    m_isFeatureRegistered = true;
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS vp::VpFeatureManagerNext::UnregisterFeatures()
+{
+    while (!m_featureHandler.empty())
+    {
+        auto it = m_featureHandler.begin();
+        SwFilterFeatureHandler* p = it->second;
+        m_featureHandler.erase(it);
+        MOS_Delete(p);
+    }
+    m_isFeatureRegistered = false;
+    return MOS_STATUS_SUCCESS;
 }
 
 /****************************************************************************************************/
@@ -164,10 +234,8 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
 
     if (pvpParams->pSrc[0]->pDeinterlaceParams              ||
         pvpParams->pSrc[0]->pBlendingParams                 ||
-        pvpParams->pSrc[0]->pColorPipeParams                ||
         pvpParams->pSrc[0]->pHDRParams                      ||
         pvpParams->pSrc[0]->pLumaKeyParams                  ||
-        pvpParams->pSrc[0]->pProcampParams                  ||
         pvpParams->pSrc[0]->bInterlacedScaling              ||
         pvpParams->pConstriction)
     {
@@ -178,8 +246,7 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
     // Disable chroma DN in APO path.
     // Disable HVS Denoise in APO path.
     if (pvpParams->pSrc[0]->pDenoiseParams                       &&
-       (pvpParams->pSrc[0]->pDenoiseParams->bEnableChroma        ||
-        pvpParams->pSrc[0]->pDenoiseParams->bEnableHVSDenoise))
+        pvpParams->pSrc[0]->pDenoiseParams->bEnableHVSDenoise)
     {
         return MOS_STATUS_SUCCESS;
     }
@@ -339,7 +406,8 @@ bool VPFeatureManager::IsVeboxOutFeasible(
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
         __VPHAL_BYPASS_COMPOSITION_ID,
-        &UserFeatureData));
+        &UserFeatureData,
+        m_hwInterface->m_osInterface->pOsContext));
     dwCompBypassMode = UserFeatureData.u32Data;
 
     if (dwCompBypassMode  != VP_COMP_BYPASS_DISABLED                           &&
@@ -460,7 +528,8 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
         MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
             nullptr,
             __VPHAL_VEBOX_DISABLE_SFC_ID,
-            &UserFeatureData));
+            &UserFeatureData,
+            m_hwInterface->m_osInterface->pOsContext));
 
         disableSFC = UserFeatureData.bData ? true : false;
 
@@ -583,18 +652,27 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
        (params->pCompAlpha->AlphaMode == VPHAL_ALPHA_FILL_MODE_NONE         ||
         params->pCompAlpha->AlphaMode == VPHAL_ALPHA_FILL_MODE_SOURCE_STREAM))
     {
-        if ((params->pTarget[0]->Format == Format_A8R8G8B8    ||
-            params->pTarget[0]->Format == Format_A8B8G8R8     ||
-            params->pTarget[0]->Format == Format_R10G10B10A2  ||
-            params->pTarget[0]->Format == Format_B10G10R10A2  ||
-            params->pTarget[0]->Format == Format_Y410         ||
-            params->pTarget[0]->Format == Format_Y416         ||
-            params->pTarget[0]->Format == Format_AYUV)        &&
-           (params->pSrc[0]->Format == Format_A8B8G8R8        ||
-            params->pSrc[0]->Format == Format_A8R8G8B8        ||
-            params->pSrc[0]->Format == Format_Y410            ||
-            params->pSrc[0]->Format == Format_Y416            ||
-            params->pSrc[0]->Format == Format_AYUV))
+        //No Alpha DDI for LIBVA, Always allow SFC to do detail feature on GEN12+ on linux
+        //No matter what the current alpha mode is.
+        if (params->pSrc[0]->bIEF == true)
+        {
+            params->pCompAlpha->AlphaMode = VPHAL_ALPHA_FILL_MODE_NONE;
+            params->pCompAlpha->fAlpha    = 1.0;
+            bRet                          = true;
+            return bRet;
+        }
+        else if ((params->pTarget[0]->Format == Format_A8R8G8B8    ||
+                 params->pTarget[0]->Format == Format_A8B8G8R8     ||
+                 params->pTarget[0]->Format == Format_R10G10B10A2  ||
+                 params->pTarget[0]->Format == Format_B10G10R10A2  ||
+                 params->pTarget[0]->Format == Format_Y410         ||
+                 params->pTarget[0]->Format == Format_Y416         ||
+                 params->pTarget[0]->Format == Format_AYUV)        &&
+                (params->pSrc[0]->Format == Format_A8B8G8R8        ||
+                 params->pSrc[0]->Format == Format_A8R8G8B8        ||
+                 params->pSrc[0]->Format == Format_Y410            ||
+                 params->pSrc[0]->Format == Format_Y416            ||
+                 params->pSrc[0]->Format == Format_AYUV))
         {
             bRet = false;
             return bRet;

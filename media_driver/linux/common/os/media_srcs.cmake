@@ -19,7 +19,9 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 media_include_subdirectory(i915)
-
+if(ENABLE_PRODUCTION_KMD)
+media_include_subdirectory(i915_production)
+endif()
 
 set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/hwinfo_linux.c
@@ -34,6 +36,7 @@ set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/mos_auxtable_mgr.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_interface.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_gpucontext_specific_ext.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/memory_policy_manager_specific.cpp
 )
 
 set(TMP_HEADERS_

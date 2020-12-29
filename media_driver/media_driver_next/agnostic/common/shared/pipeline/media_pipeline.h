@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,6 +38,7 @@
 #include "media_status_report.h"
 #include "media_feature_manager.h"
 #include "codechal_utilities.h"
+#include "media_perf_profiler.h"
 
 class MediaPacket;
 class MediaPipeline
@@ -116,6 +117,9 @@ public:
 
     MediaContext *GetMediaContext() { return m_mediaContext; }
     virtual MediaFeatureManager *GetFeatureManager() { return m_featureManager; };
+
+    std::shared_ptr<MediaFeatureManager::ManagerLite> GetPacketLevelFeatureManager(int packetId) { return m_featureManager->GetPacketLevelFeatureManager(packetId); }
+
     MediaScalability* &GetMediaScalability() { return m_scalability; }
     //!
     //! \brief  Get if frame tracking is enabled from scalability
@@ -175,6 +179,19 @@ protected:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     MOS_STATUS ActivatePacket(uint32_t packetId, bool immediateSubmit, uint8_t pass, uint8_t pipe, uint8_t pipeNum = 1, uint8_t subPass = 0, uint8_t rowNum = 0);
+
+    //!
+    //! \brief  Activate packet and add it to active packet list
+    //! \param  [in] packetId
+    //!         Packet Id
+    //! \param  [in] immediateSubmit
+    //!         Indicate if this packet to activate is needed to submit immediately after been added to task
+    //! \param  [in] stateProperty
+    //!         State property of packet
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS ActivatePacket(uint32_t packetId, bool immediateSubmit, StateParams &stateProperty);
 
     //!
     //! \brief  Finish the active packets execution

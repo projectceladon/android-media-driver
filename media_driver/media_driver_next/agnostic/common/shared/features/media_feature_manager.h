@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018 - 2019, Intel Corporation
+* Copyright (c) 2018 - 2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -49,6 +49,8 @@ enum SubComponentIDs
     FEATURE_SUBCOMPONENT_COMMON = 0,
     FEATURE_SUBCOMPONENT_HEVC,
     FEATURE_SUBCOMPONENT_VP9,
+    FEATURE_SUBCOMPONENT_AVC,
+
     reserve0,
 };
 
@@ -94,12 +96,100 @@ struct FeatureIDs
     }                                                                                               \
 }
 
+//!
+//! \def LOOP_FEATURE_INTERFACE_RETURN(_interfaceClass, _interface, ...)
+//!  Run _featureInterface for all features
+//!
+#define LOOP_FEATURE_INTERFACE_RETURN(_interfaceClass, _interface, ...)  \
+    {                                                                    \
+        if (m_featureManager)                                            \
+        {                                                                \
+            for (auto feature : *m_featureManager)                       \
+            {                                                            \
+                auto itf = dynamic_cast<_interfaceClass *>(feature);     \
+                if (itf)                                                 \
+                {                                                        \
+                    MHW_CHK_STATUS_RETURN(itf->_interface(__VA_ARGS__)); \
+                }                                                        \
+            }                                                            \
+        }                                                                \
+    }
+
+//!
+//! \def LOOP_FEATURE_INTERFACE_NO_RETURN(_interfaceClass, _interface, ...)
+//!  Run _featureInterface for all features
+//!
+#define LOOP_FEATURE_INTERFACE_NO_RETURN(_interfaceClass, _interface, ...) \
+    {                                                                      \
+        if (m_featureManager)                                              \
+        {                                                                  \
+            for (auto feature : *m_featureManager)                         \
+            {                                                              \
+                auto itf = dynamic_cast<_interfaceClass *>(feature);       \
+                if (itf)                                                   \
+                {                                                          \
+                    itf->_interface(__VA_ARGS__);                          \
+                }                                                          \
+            }                                                              \
+        }                                                                  \
+    }
 
 class MediaFeature;
 
-class MediaFeatureManager
+enum class LIST_TYPE
 {
+    BLOCK_LIST,
+    ALLOW_LIST,
+};
+
+class MediaFeatureManager  // for pipe line use
+{
+protected:
+    using container_t = std::map<int, MediaFeature *>;
+
 public:
+    class ManagerLite final  // for packet use
+    {
+        friend class MediaFeatureManager;
+
+    public:
+        class iterator : public container_t::iterator
+        {
+        public:
+            explicit iterator(container_t::iterator it) : container_t::iterator(it) {}
+
+            container_t::mapped_type operator*() { return (*this)->second; }
+        };
+
+        ManagerLite() = default;
+
+        iterator begin() { return iterator(m_features.begin()); }
+
+        iterator end() { return iterator(m_features.end()); }
+
+        MediaFeature *GetFeature(int featureID)
+        {
+            auto iter = m_features.find(featureID);
+            if (iter == m_features.end())
+            {
+                return nullptr;
+            }
+            return iter->second;
+        }
+
+    private:
+        container_t m_features;
+    };
+
+public:
+    class iterator : public container_t::iterator
+    {
+    public:
+        explicit iterator(container_t::iterator it) : container_t::iterator(it) {}
+
+        container_t::mapped_type operator*() { return (*this)->second; }
+    };
+
     //!
     //! \brief  MediaFeatureManager constructor
     //!
@@ -109,6 +199,10 @@ public:
     //! \brief  MediaFeatureManager deconstructor
     //!
     virtual ~MediaFeatureManager() { Destroy(); }
+
+    iterator begin() { return iterator(m_features.begin()); }
+
+    iterator end() { return iterator(m_features.end()); }
 
     //!
     //! \brief  Initialize all features
@@ -120,15 +214,38 @@ public:
     MOS_STATUS Init(void *settings);
 
     //!
-    //! \brief  Register features
+    //! \brief  Register features, if last two parameters use
+    //!         default values, feature to be registered will
+    //!         not be blocked by any packet
     //! \param  [in] featureID
     //!         ID of the feature to be reigstered
     //! \param  [in] feature
     //!         Pointer to the feature to be registered
+    //! \param  [in] packetIds
+    //!         Packet ID list, if it is an allow list, feature will
+    //!         be only added to packets in the list, otherwise feature
+    //!         will be added to packets not in the list, by default it
+    //!         is an empty list
+    //! \param  [in] packetIdListType
+    //!         Indicate whether packet ID list is a block list
+    //!         or an allow list, by default it is a block list.
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    MOS_STATUS RegisterFeatures(int featureID, MediaFeature *feature);
+    MOS_STATUS RegisterFeatures(
+        int                featureID,
+        MediaFeature *     feature,
+        std::vector<int> &&packetIds        = {},
+        LIST_TYPE          packetIdListType = LIST_TYPE::BLOCK_LIST);
+
+    //!
+    //! \brief  Get packet level feature manager
+    //! \param  [in] packetId
+    //!         ID of packet
+    //! \return std::shared_ptr<ManagerLite>
+    //!         A pointer to packet level feature manager
+    //!
+    std::shared_ptr<ManagerLite> GetPacketLevelFeatureManager(int packetId);
 
     //!
     //! \brief  Update all features
@@ -185,7 +302,7 @@ protected:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS CreateConstSettigs() { return MOS_STATUS_SUCCESS; };
+    virtual MOS_STATUS CreateConstSettings() { return MOS_STATUS_SUCCESS; };
 
     //!
     //! \brief  Create features
@@ -203,7 +320,9 @@ protected:
     //!
     uint8_t GetTargetUsage(){return m_targetUsage;}
 
-    std::map<int, MediaFeature *> m_features;
+    container_t m_features;
+    std::map<int, std::vector<int>> m_packetIdList;  // map feature ID to a vector of packet ID
+    std::map<int, LIST_TYPE> m_packetIdListTypes;  // map feature ID to a flag, indicates whether packet ID vector is a block list or an allow list
     MediaFeatureConstSettings *m_featureConstSettings = nullptr;
     uint8_t m_targetUsage = 0;
     uint8_t m_passNum = 1;

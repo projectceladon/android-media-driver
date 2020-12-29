@@ -459,7 +459,28 @@ typedef struct _CODEC_AVC_ENCODE_SEQUENCE_PARAMS
             *        \n - 1 : streaming buffer by DDR is enabled.
             */
             uint32_t           EnableStreamingBufferDDR     : 1;
-            uint32_t           Reserved1                    : 5;
+            /*! \brief Indicates whether or not the encoding is in hierarchical GOP structure, for both RA B and LD B frame types
+            *
+            *        \n - 0 : BRC would treat it as flat structure.
+            *        \n - 1 : hierarchical structure.
+            *    \n In another word, this flag is equivalent to Qp Modulation enabling flag. If HierarchicalFlag == 1, app would enable Qp modulation for either random access or low delay hierarchical structure.
+            */
+            uint32_t           HierarchicalFlag             : 1;
+            /*! \brief Indicates whether or not the encoding is in low delay mode.
+            *
+            *        \n - 0 : the non-base temporal layers should be coded as random access B frames.
+            *        \n - 1 : no random access B will be coded. And the coding type could be only I or P.
+            *    \n Note: this flag only indicates the frame coding type, and is not related to BRC low delay mode.
+            */
+            uint32_t           LowDelayMode                 : 1;
+            /*! \brief Indicates if current encodin gis lookahead pass.
+            *
+            *        \n - 0 : the current encoding is in the actual encoding pass, and one of the BRC modes (CBR, VBR, etc.) should be selected.
+            *        \n - 1 : the current encoding is in the lookahead pass.
+            *    \n Valid only when LookAheadAnalysisSupport in CAP is on and LookAheadDepth > 0.
+            */
+            uint32_t           bLookAheadPhase              : 1;
+            uint32_t           Reserved1                    : 2;
         };
         uint32_t            sFlags;
     };
@@ -790,6 +811,7 @@ typedef struct _CODEC_AVC_ENCODE_PIC_PARAMS
     */
     uint8_t         NumROI;
     uint8_t         NumDirtyROI;                        //!< Number of dirty ROIs [0...4]
+    uint8_t         NumDeltaQpForNonRectROI;            //!< Number of DeltaQP for non-rectangular ROIs [0...16]
     /*! \brief Dictates the value of delta QP for any ROI should be within [MinDeltaQp..MaxDeltaQp]
     *
     *    Applies only to BRC case.
@@ -800,6 +822,13 @@ typedef struct _CODEC_AVC_ENCODE_PIC_PARAMS
     *    Applies only to BRC case.
     */
     char            MinDeltaQp;
+    /*! \brief Determine possible DeltaQP values for NonRectROI. For BRC case values should be within [MinDeltaQp..MaxDeltaQp]
+    *
+    *    QP value for the MB is represented by NonRectROIDeltaQpList[QpData - 1],
+    *    where QpData - UCHAR in ENCODE_MBQPDATA structure.
+    *    if QpData == 0, the block is in the background, and slice QP (QpY + slice_qp_delta) is applied on this MB.
+    */
+    char            NonRectROIDeltaQpList[16];
     /*! \brief Defines ROI settings.
     *
     *    Value entries are ROI[0] up to ROI[NumROI – 1], inclusively, if NumROI > 0. And it can be ignored otherwise.
@@ -975,6 +1004,22 @@ typedef struct _CODEC_AVC_ENCODE_PIC_PARAMS
     *  In unit of bytes. Should be larger than or equal to 4. Valid for encoders which report SyncSupport capability as true.
     */
     uint32_t        SyncMarkerSize;
+
+    /*! \brief hierarchical level plus one for pyramid encoding.
+    *
+    *  When HierarchLevelPlus1 > 0, HierarchLevelPlus1 – 1 indicates the current frame’s hierarchical level.
+    *  And it is for both random access and low delay hierarchical structure.
+    *  HierarchLevelPlus1 == 0 can be treated as meaningless. It is defined as a legacy reason for HEVC.
+    */
+    uint8_t         HierarchLevelPlus1;
+
+    /*! \brief QP modulation strength for BRC
+    *
+    *  Suggestion of the strength of applying Qp delta for the frame specified when Qp modulation is enabled (HierarchicalFlag == 1).
+    *  This is a relative number. BRC could use it to infer final delta Qp values for hierarchical frames in mini Gop structure.
+    *  Default value 0 means no suggestion for Qp modulation
+    */
+    uint8_t         QpModulationStrength;
 
 } CODEC_AVC_ENCODE_PIC_PARAMS, *PCODEC_AVC_ENCODE_PIC_PARAMS;
 

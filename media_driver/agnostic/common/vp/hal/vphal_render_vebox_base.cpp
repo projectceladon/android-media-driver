@@ -34,6 +34,7 @@
 #include "vphal_render_common.h"
 #include "renderhal_platform_interface.h"
 #include "hal_oca_interface.h"
+#include <string>
 
 extern const Kdll_Layer g_cSurfaceType_Layer[];
 
@@ -158,7 +159,7 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVecsStatusTag(
     PMOS_INTERFACE                      pOsInterface,
     PMOS_COMMAND_BUFFER                 pCmdBuffer)
 {
-    MOS_RESOURCE                        GpuStatusBuffer;
+    PMOS_RESOURCE                       gpuStatusBuffer = nullptr;
     MHW_MI_FLUSH_DW_PARAMS              FlushDwParams;
     MOS_STATUS                          eStatus = MOS_STATUS_SUCCESS;
 
@@ -176,17 +177,17 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVecsStatusTag(
     // Get GPU Status buffer
     VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnGetGpuStatusBufferResource(
         pOsInterface, 
-        &GpuStatusBuffer));
-
+        gpuStatusBuffer));
+    VPHAL_RENDER_CHK_NULL(gpuStatusBuffer);
     // Register the buffer
     VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnRegisterResource(
         pOsInterface,
-        &GpuStatusBuffer,
+        gpuStatusBuffer,
         true,
         true));
 
     MOS_ZeroMemory(&FlushDwParams, sizeof(FlushDwParams));
-    FlushDwParams.pOsResource       = &GpuStatusBuffer;
+    FlushDwParams.pOsResource       = gpuStatusBuffer;
     FlushDwParams.dwResourceOffset  = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, MOS_GPU_CONTEXT_VEBOX);
     FlushDwParams.dwDataDW1         = pOsInterface->pfnGetGpuStatusTag(pOsInterface, MOS_GPU_CONTEXT_VEBOX);
     VPHAL_RENDER_CHK_STATUS(pMhwMiInterface->AddMiFlushDwCmd(
@@ -313,7 +314,8 @@ MOS_STATUS VPHAL_VEBOX_STATE::Initialize(
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
         __VPHAL_BYPASS_COMPOSITION_ID,
-        &UserFeatureData));
+        &UserFeatureData,
+        m_pOsInterface->pOsContext));
     pVeboxState->dwCompBypassMode = UserFeatureData.u32Data;
 
     if (MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrSFCPipe) &&
@@ -324,7 +326,8 @@ MOS_STATUS VPHAL_VEBOX_STATE::Initialize(
         MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
             nullptr,
             __VPHAL_VEBOX_DISABLE_SFC_ID,
-            &UserFeatureData));
+            &UserFeatureData,
+            m_pOsInterface->pOsContext));
         m_sfcPipeState->SetDisable(UserFeatureData.bData ? true : false);
     }
 
@@ -1744,8 +1747,6 @@ finish:
 //!           reference to Cmd buffer control struct
 //! \param    [out] GenericPrologParams
 //!           Generic prolog params struct to be set
-//! \param    [out] GpuStatusBuffer
-//!           GpuStatusBuffer resource to be set
 //! \param    [out] iRemaining
 //!           integer showing initial cmd buffer usage
 //! \return   MOS_STATUS
@@ -1754,7 +1755,6 @@ finish:
 MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVeboxCmd_Prepare(
     MOS_COMMAND_BUFFER&                      CmdBuffer,
     RENDERHAL_GENERIC_PROLOG_PARAMS&         GenericPrologParams,
-    MOS_RESOURCE&                            GpuStatusBuffer,
     int32_t&                                 iRemaining)
 {
     MOS_STATUS                              eStatus      = MOS_STATUS_SUCCESS;
@@ -1796,14 +1796,15 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVeboxCmd_Prepare(
         (pVeboxState->m_sfcPipeState != nullptr && !pVeboxState->m_sfcPipeState->m_bSFC2Pass) &&
         pOsInterface->bEnableKmdMediaFrameTracking)
     {
+        PMOS_RESOURCE gpuStatusBuffer = nullptr;
         // Get GPU Status buffer
-        VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, &GpuStatusBuffer));
-
+        VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, gpuStatusBuffer));
+        VPHAL_RENDER_CHK_NULL(gpuStatusBuffer);
         // Register the buffer
-        VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnRegisterResource(pOsInterface, &GpuStatusBuffer, true, true));
+        VPHAL_RENDER_CHK_STATUS(pOsInterface->pfnRegisterResource(pOsInterface, gpuStatusBuffer, true, true));
 
         GenericPrologParams.bEnableMediaFrameTracking       = true;
-        GenericPrologParams.presMediaFrameTrackingSurface   = &GpuStatusBuffer;
+        GenericPrologParams.presMediaFrameTrackingSurface   = gpuStatusBuffer;
         GenericPrologParams.dwMediaFrameTrackingTag         = pOsInterface->pfnGetGpuStatusTag(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
         GenericPrologParams.dwMediaFrameTrackingAddrOffset  = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
 
@@ -1826,8 +1827,9 @@ finish:
 //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
 //!
 MOS_STATUS VPHAL_VEBOX_STATE::VeboxIsCmdParamsValid(
-    const MHW_VEBOX_STATE_CMD_PARAMS        &VeboxStateCmdParams,
-    const MHW_VEBOX_DI_IECP_CMD_PARAMS      &VeboxDiIecpCmdParams)
+    const MHW_VEBOX_STATE_CMD_PARAMS            &VeboxStateCmdParams,
+    const MHW_VEBOX_DI_IECP_CMD_PARAMS          &VeboxDiIecpCmdParams,
+    const VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS  &VeboxSurfaceStateCmdParams)
 {
     const MHW_VEBOX_MODE    &veboxMode          = VeboxStateCmdParams.VeboxMode;
 
@@ -1840,6 +1842,17 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxIsCmdParamsValid(
         }
         if (nullptr == VeboxDiIecpCmdParams.pOsResCurrOutput &&
             (MEDIA_VEBOX_DI_OUTPUT_CURRENT == veboxMode.DIOutputFrames || MEDIA_VEBOX_DI_OUTPUT_BOTH == veboxMode.DIOutputFrames))
+        {
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
+    }
+
+    if (IsDNOnly())
+    {
+        VPHAL_RENDER_CHK_NULL_RETURN(VeboxSurfaceStateCmdParams.pSurfInput);
+        VPHAL_RENDER_CHK_NULL_RETURN(VeboxSurfaceStateCmdParams.pSurfDNOutput);
+
+        if (VeboxSurfaceStateCmdParams.pSurfInput->dwPitch != VeboxSurfaceStateCmdParams.pSurfDNOutput->dwPitch)
         {
             return MOS_STATUS_INVALID_PARAMETER;
         }
@@ -1927,6 +1940,14 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxRenderVeboxCmd(
         bDiVarianceEnable,
         &VeboxSurfaceStateCmdParams);
 
+    // Add compressible info of input/output surface to log
+    if( this->m_currentSurface && VeboxSurfaceStateCmdParams.pSurfOutput)
+    {
+        std::string info = "in_comps = " + std::to_string(int(this->m_currentSurface->bCompressible)) + ", out_comps = " + std::to_string(int(VeboxSurfaceStateCmdParams.pSurfOutput->bCompressible));
+        const char* ocaLog = info.c_str();
+        HalOcaInterface::TraceMessage(CmdBuffer, *pOsContext, ocaLog, info.size());
+    }
+
     VPHAL_RENDER_CHK_STATUS(pVeboxState->SetupVeboxState(
         bDiVarianceEnable,
         &VeboxStateCmdParams));
@@ -1947,7 +1968,8 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxRenderVeboxCmd(
 
     VPHAL_RENDER_CHK_STATUS(pVeboxState->VeboxIsCmdParamsValid(
         VeboxStateCmdParams,
-        VeboxDiIecpCmdParams));
+        VeboxDiIecpCmdParams,
+        VeboxSurfaceStateCmdParams));
 
     // Ensure output is ready to be written
     if (VeboxDiIecpCmdParams.pOsResCurrOutput)
@@ -2119,7 +2141,6 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVeboxCmd()
     MHW_MI_FLUSH_DW_PARAMS                  FlushDwParams                   = {};
     PMHW_VEBOX_INTERFACE                    pVeboxInterface                 = {};
     RENDERHAL_GENERIC_PROLOG_PARAMS         GenericPrologParams             = {};
-    MOS_RESOURCE                            GpuStatusBuffer                 = {};
     PVPHAL_VEBOX_STATE                      pVeboxState                     = this;
     PVPHAL_VEBOX_RENDER_DATA                pRenderData                     = GetLastExecRenderData();
 
@@ -2142,7 +2163,6 @@ MOS_STATUS VPHAL_VEBOX_STATE::VeboxSendVeboxCmd()
     VPHAL_RENDER_CHK_STATUS(VeboxSendVeboxCmd_Prepare(
         CmdBuffer,
         GenericPrologParams,
-        GpuStatusBuffer,
         iRemaining));
 
     VPHAL_RENDER_CHK_STATUS(VeboxRenderVeboxCmd(
@@ -4242,6 +4262,7 @@ MOS_STATUS VpHal_RndrRenderVebox(
     PVPHAL_SURFACE           pInSurface     = nullptr;
     RECT                     rcTempOut      = {};
     RECT                     rcTemp         = {};
+    RECT                     rcTempIn       = {};
     PVPHAL_VEBOX_STATE       pVeboxState    = nullptr;
     PVPHAL_VEBOX_RENDER_DATA pRenderData    = nullptr;
 
@@ -4316,6 +4337,7 @@ MOS_STATUS VpHal_RndrRenderVebox(
         }
 
         rcTemp = pcRenderParams->pTarget[0]->rcDst;
+        rcTempIn = pcRenderParams->pSrc[0]->rcDst;
         if (pVeboxState->m_sfcPipeState && pVeboxState->m_sfcPipeState->m_bSFC2Pass)
         { //SFC 2 pass, there is the first pass's surface;
             float                    TempfScaleX = 1.0;
@@ -4392,7 +4414,7 @@ MOS_STATUS VpHal_RndrRenderVebox(
             pVeboxState->m_sfcPipeState->m_bSFC2Pass = false;
             pInSurface = &pVeboxState->SfcTempSurface;
             pInSurface->rcMaxSrc = pInSurface->rcSrc;
-            pInSurface->rcDst    = rcTemp;
+            pInSurface->rcDst    = rcTempIn;
 
             // recover the orignal rcDst for the second loop
             pcRenderParams->pTarget[0]->rcDst    = rcTemp;

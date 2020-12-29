@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2018, Intel Corporation
+* Copyright (c) 2017-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -600,6 +600,13 @@ public:
     bool IsVpConfigId(VAConfigID configId);
 
     //!
+    //! \brief    Get CP Caps object
+    //!
+    //! \return   return MediaLibvaCapsCpInterface*
+    //!
+    MediaLibvaCapsCpInterface* GetCpCaps();
+
+    //!
     //! \brief    Check if the entrypoint is supported by MFE
     //!
     //! \param    [in] entrypoint
@@ -761,7 +768,7 @@ protected:
 
     static const uint16_t m_maxProfiles = 17; //!< Maximum number of supported profiles
     static const uint16_t m_maxProfileEntries = 64; //!< Maximum number of supported profile & entrypoint combinations
-    static const uint32_t m_numVpSurfaceAttr = 15; //!< Number of VP surface attributes
+    static const uint32_t m_numVpSurfaceAttr = 17; //!< Number of VP surface attributes
     static const uint32_t m_numJpegSurfaceAttr = 7; //!< Number of JPEG surface attributes
     static const uint32_t m_numJpegEncSurfaceAttr = 4; //!< Number of JPEG encode surface attributes
     static const uint16_t m_maxEntrypoints = 7; //!<  Maximum number of supported entrypoints
@@ -801,6 +808,7 @@ protected:
         ENCODE_JPEG_MAX_PIC_HEIGHT; //!< Maximum height for JPEG encoding
     DDI_MEDIA_CONTEXT *m_mediaCtx; //!< Pointer to media context
 
+    friend class MediaLibvaCapsCpInterface;
     MediaLibvaCapsCpInterface* m_CapsCp;
 
     static constexpr uint32_t m_configAttribNone = 0x00000000; //!< Define for empty attrib

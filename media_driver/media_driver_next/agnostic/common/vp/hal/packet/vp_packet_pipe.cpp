@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -49,12 +49,14 @@ void PacketFactory::ClearPacketPool(std::vector<VpCmdPacket *> &pool)
     }
 }
 
-MOS_STATUS PacketFactory::Initialize(MediaTask *pTask, PVP_MHWINTERFACE pHwInterface, PVpAllocator pAllocator, VPMediaMemComp *pMmc)
+MOS_STATUS PacketFactory::Initialize(MediaTask *pTask, PVP_MHWINTERFACE pHwInterface, PVpAllocator pAllocator, VPMediaMemComp *pMmc, VP_PACKET_SHARED_CONTEXT *packetSharedContext, VpKernelSet* vpKernels)
 {
     m_pTask = pTask;
     m_pHwInterface = pHwInterface;
     m_pAllocator = pAllocator;
     m_pMmc = pMmc;
+    m_packetSharedContext = packetSharedContext;
+    m_kernelSet = vpKernels;
 
     return MOS_STATUS_SUCCESS;
 }
@@ -64,7 +66,7 @@ VpCmdPacket *PacketFactory::CreatePacket(EngineType type)
     switch(type)
     {
     case EngineTypeVebox:
-    case EngineTypeSfc:
+    case EngineTypeVeboxSfc:
         if (!m_VeboxPacketPool.empty())
         {
             VpCmdPacket *p = m_VeboxPacketPool.back();
@@ -94,10 +96,10 @@ void PacketFactory::ReturnPacket(VpCmdPacket *&pPacket)
     PacketType type = pPacket->GetPacketId();
     switch (type)
     {
-    case VP_PIPELINE_PACKET_FF:
+    case VP_PIPELINE_PACKET_VEBOX:
         m_VeboxPacketPool.push_back(pPacket);
         break;
-    case VP_PIPELINE_PACKET_COMP:
+    case VP_PIPELINE_PACKET_RENDER:
         m_RenderPacketPool.push_back(pPacket);
         break;
     default:
@@ -108,12 +110,22 @@ void PacketFactory::ReturnPacket(VpCmdPacket *&pPacket)
 
 VpCmdPacket *PacketFactory::CreateVeboxPacket()
 {
-    return m_vpPlatformInterface ? m_vpPlatformInterface->CreateVeboxPacket(m_pTask, m_pHwInterface, m_pAllocator, m_pMmc) : nullptr;
+    VpCmdPacket *p = m_vpPlatformInterface ? m_vpPlatformInterface->CreateVeboxPacket(m_pTask, m_pHwInterface, m_pAllocator, m_pMmc) : nullptr;
+    if (p)
+    {
+        p->SetPacketSharedContext(m_packetSharedContext);
+    }
+    return p;
 }
 
 VpCmdPacket *PacketFactory::CreateRenderPacket()
 {
-    return m_vpPlatformInterface ? m_vpPlatformInterface->CreateRenderPacket(m_pTask, m_pHwInterface, m_pAllocator, m_pMmc) : nullptr;
+    VpCmdPacket *p = m_vpPlatformInterface ? m_vpPlatformInterface->CreateRenderPacket(m_pTask, m_pHwInterface, m_pAllocator, m_pMmc, m_kernelSet) : nullptr;
+    if (p)
+    {
+        p->SetPacketSharedContext(m_packetSharedContext);
+    }
+    return p;
 }
 
 PacketPipe::PacketPipe(PacketFactory &packetFactory) : m_PacketFactory(packetFactory)
@@ -128,6 +140,7 @@ PacketPipe::~PacketPipe()
 MOS_STATUS PacketPipe::Clean()
 {
     m_outputPipeMode = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+    m_veboxFeatureInuse = false;
     for (std::vector<VpCmdPacket *>::iterator it = m_Pipe.begin(); it != m_Pipe.end(); ++it)
     {
         m_PacketFactory.ReturnPacket(*it);
@@ -149,6 +162,7 @@ MOS_STATUS PacketPipe::AddPacket(HwFilter &hwFilter)
     }
     m_Pipe.push_back(pPacket);
     VP_PUBLIC_CHK_STATUS_RETURN(SetOutputPipeMode(hwFilter.GetEngineType()));
+    m_veboxFeatureInuse |= hwFilter.IsVeboxFeatureInuse();
 
     return MOS_STATUS_SUCCESS;
 }
@@ -160,7 +174,7 @@ MOS_STATUS PacketPipe::SetOutputPipeMode(EngineType engineType)
     case EngineTypeVebox:
         m_outputPipeMode = VPHAL_OUTPUT_PIPE_MODE_VEBOX;
         break;
-    case EngineTypeSfc:
+    case EngineTypeVeboxSfc:
         m_outputPipeMode = VPHAL_OUTPUT_PIPE_MODE_SFC;
         break;
     case EngineTypeRender:
@@ -180,7 +194,7 @@ MOS_STATUS PacketPipe::SwitchContext(PacketType type, MediaScalability *&scalabi
     ScalabilityPars scalPars = {};
     switch (type)
     {
-    case VP_PIPELINE_PACKET_FF:
+    case VP_PIPELINE_PACKET_VEBOX:
         {
             VP_PUBLIC_NORMALMESSAGE("Switch to Vebox Context");
 
@@ -191,7 +205,7 @@ MOS_STATUS PacketPipe::SwitchContext(PacketType type, MediaScalability *&scalabi
             VP_PUBLIC_CHK_NULL_RETURN(scalability);
             break;
         }
-    case VP_PIPELINE_PACKET_COMP:
+    case VP_PIPELINE_PACKET_RENDER:
         {
             VP_PUBLIC_NORMALMESSAGE("Switch to Render Context");
             VP_PUBLIC_CHK_STATUS_RETURN(mediaContext->SwitchContext(RenderGenericFunc, &scalPars, &scalability));

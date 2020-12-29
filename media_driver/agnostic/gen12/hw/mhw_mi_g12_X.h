@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015-2019, Intel Corporation
+* Copyright (c) 2015-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -34,6 +34,7 @@
 typedef struct _MHW_MI_VD_CONTROL_STATE_PARAMS
 {
     bool    vdencEnabled;
+    bool    avpEnabled;
     bool    initialization;
     bool    vdencInitialization;
     bool    scalableModePipeLock;
@@ -108,6 +109,18 @@ struct MhwMiInterfaceG12 : public MhwMiInterfaceGeneric<mhw_mi_g12_X>
         PMOS_COMMAND_BUFFER                 cmdBuffer,
         PMHW_BATCH_BUFFER                   batchBuffer,
         PMHW_PIPE_CONTROL_PARAMS            params);
+
+    MOS_STATUS AddMediaStateFlush(
+        PMOS_COMMAND_BUFFER          cmdBuffer,
+        PMHW_BATCH_BUFFER            batchBuffer,
+        PMHW_MEDIA_STATE_FLUSH_PARAM params = nullptr);
+
+    MOS_STATUS SkipMiBatchBufferEndBb(
+        PMHW_BATCH_BUFFER batchBuffer);
+
+    MOS_STATUS AddMiFlushDwCmd(
+        PMOS_COMMAND_BUFFER     cmdBuffer,
+        PMHW_MI_FLUSH_DW_PARAMS params);
 
     //!
     //! \brief    Adds Mi Vd control state cmd in command buffer
@@ -184,7 +197,11 @@ private:
         if (MOS_RCS_ENGINE_USED(gpuContext) &&
             ((M_MMIO_RCS_HW_FE_REMAP_RANGE_BEGIN <= reg && reg <= M_MMIO_RCS_HW_FE_REMAP_RANGE_END) 
            ||(M_MMIO_RCS_AUX_TBL_REMAP_RANGE_BEGIN <= reg && reg <= M_MMIO_RCS_AUX_TBL_REMAP_RANGE_END)
-           ||(M_MMIO_RCS_TRTT_REMAP_RANGE_BEGIN <= reg && reg <= M_MMIO_RCS_TRTT_REMAP_RANGE_END)))
+           ||(M_MMIO_RCS_TRTT_REMAP_RANGE_BEGIN <= reg && reg <= M_MMIO_RCS_TRTT_REMAP_RANGE_END)
+           ||(M_MMIO_CCS0_HW_FRONT_END_BASE_BEGIN <= reg && reg <= M_MMIO_CCS0_HW_FRONT_END_BASE_END)
+           ||(M_MMIO_CCS1_HW_FRONT_END_BASE_BEGIN <= reg && reg <= M_MMIO_CCS1_HW_FRONT_END_BASE_END)
+           ||(M_MMIO_CCS2_HW_FRONT_END_BASE_BEGIN <= reg && reg <= M_MMIO_CCS2_HW_FRONT_END_BASE_END)
+           ||(M_MMIO_CCS3_HW_FRONT_END_BASE_BEGIN <= reg && reg <= M_MMIO_CCS3_HW_FRONT_END_BASE_END)))
         {
             return true;
         }

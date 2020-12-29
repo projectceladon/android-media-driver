@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, Intel Corporation
+* Copyright (c) 2017-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -34,10 +34,15 @@
 #include "mhw_vdbox_vdenc_g12_X.h"
 #include "mhw_vdbox_hcp_g12_X.h"
 #include "media_interfaces_g12_tgllp.h"
+#if defined(ENABLE_KERNELS) && !defined(_FULL_OPEN_SOURCE)
+#include "igcodeckrn_g12.h"
+#endif
+#include "codechal_utilities.h"
+#include "codeckrnheader.h"
 
 // Currently initialized with dummy values, just as an example. Will be updated later.
-const CODECHAL_SSEU_SETTING CodechalHwInterfaceG12::m_defaultSsEuLutG12[CODECHAL_NUM_MEDIA_STATES] =
-{
+const CODECHAL_SSEU_SETTING CodechalHwInterfaceG12::m_defaultSsEuLutG12[CODECHAL_NUM_MEDIA_STATES_G12] =
+    {
     // Slice    Sub-Slice   EU      Rsvd(freq)
     { 1,        0,        8,         0 },    // CODECHAL_MEDIA_STATE_OLP
     { 1,        0,        8,         0 },    // CODECHAL_MEDIA_STATE_ENC_NORMAL
@@ -96,25 +101,33 @@ const CODECHAL_SSEU_SETTING CodechalHwInterfaceG12::m_defaultSsEuLutG12[CODECHAL
     { 1,        0,        8,         0 },    // CODECHAL_MEDIA_STATE_HEVC_LCU64_B_MBENC
     { 1,        0,        8,         0 },    // CODECHAL_MEDIA_STATE_MB_BRC_UPDATE
     { 1,        0,        8,         0 },    // CODECHAL_MEDIA_STATE_STATIC_FRAME_DETECTION
-    { 1,        0,        8,         0 }     // CODECHAL_MEDIA_STATE_SW_SCOREBOARD_INIT
+    { 1,        0,        8,         0 },
+    { 1,        0,        8,         0 },
+    { 1,        0,        8,         0 },
+    { 1,        0,        8,         0 },
+    { 2,        3,        8,         0 },
+    { 2,        3,        8,         0 },
+    { 2,        3,        8,         0 },
+    { 2,        3,        8,         0 },
 };
 
 CodechalHwInterfaceG12::CodechalHwInterfaceG12(
     PMOS_INTERFACE    osInterface,
     CODECHAL_FUNCTION codecFunction,
-    MhwInterfaces     *mhwInterfaces)
-    : CodechalHwInterface(osInterface, codecFunction, mhwInterfaces)
+    MhwInterfaces     *mhwInterfaces,
+    bool              disableScalability)
+    : CodechalHwInterface(osInterface, codecFunction, mhwInterfaces, disableScalability)
 {
     CODECHAL_HW_FUNCTION_ENTER;
 
-    PLATFORM platform;
-    osInterface->pfnGetPlatform(osInterface, &platform);
+    m_avpInterface = static_cast<MhwInterfacesG12Tgllp*>(mhwInterfaces)->m_avpInterface;
 
     InitCacheabilityControlSettings(codecFunction);
 
     m_isVdencSuperSliceEnabled = true;
 
     m_ssEuTable = m_defaultSsEuLutG12;
+    m_numMediaStates = CODECHAL_NUM_MEDIA_STATES_G12;
 
     // Set platform dependent parameters
     m_sizeOfCmdBatchBufferEnd = mhw_mi_g12_X::MI_BATCH_BUFFER_END_CMD::byteSize;
@@ -137,7 +150,7 @@ CodechalHwInterfaceG12::CodechalHwInterfaceG12(
         + ENCODE_HEVC_VDENC_NUM_MAX_SLICES
         * (2 * mhw_vdbox_hcp_g12_X::HCP_WEIGHTOFFSET_STATE_CMD::byteSize
             + mhw_vdbox_hcp_g12_X::HCP_SLICE_STATE_CMD::byteSize
-            + 3 * mhw_vdbox_hcp_g12_X::HCP_PAK_INSERT_OBJECT_CMD::byteSize
+            + (HEVC_MAX_NAL_UNIT_TYPE + 2) * mhw_vdbox_hcp_g12_X::HCP_PAK_INSERT_OBJECT_CMD::byteSize
             + mhw_vdbox_vdenc_g12_X::VDENC_WEIGHTSOFFSETS_STATE_CMD::byteSize
             + mhw_mi_g12_X::MI_BATCH_BUFFER_END_CMD::byteSize
             + 4 * ENCODE_VDENC_HEVC_PADDING_DW_SIZE);
@@ -248,9 +261,108 @@ MOS_STATUS CodechalHwInterfaceG12::SetCacheabilitySettings(
     {
         CODECHAL_HW_CHK_STATUS_RETURN(m_vdencInterface->SetCacheabilitySettings(cacheabilitySettings));
     }
+    if (m_avpInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_avpInterface->SetCacheabilitySettings(cacheabilitySettings));
+    }
 
     return eStatus;
 }
+
+MOS_STATUS CodechalHwInterfaceG12::SetRowstoreCachingOffsets(
+    PMHW_VDBOX_ROWSTORE_PARAMS rowstoreParams)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+
+    CODECHAL_HW_FUNCTION_ENTER;
+
+    CODECHAL_HW_CHK_STATUS_RETURN(CodechalHwInterface::SetRowstoreCachingOffsets(rowstoreParams));
+
+    if (m_avpInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_avpInterface->GetRowstoreCachingAddrs(rowstoreParams));
+    }
+
+    return eStatus;
+}
+
+MOS_STATUS CodechalHwInterfaceG12::GetAvpStateCommandSize(
+    uint32_t                        mode,
+    uint32_t                        *commandsSize,
+    uint32_t                        *patchListSize,
+    PMHW_VDBOX_STATE_CMDSIZE_PARAMS params)
+{
+    CODECHAL_HW_FUNCTION_ENTER;
+
+    //calculate AVP related commands size
+    uint32_t    avpCommandsSize = 0;
+    uint32_t    avpPatchListSize = 0;
+
+    if (m_avpInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_avpInterface->GetAvpStateCommandSize(
+            (uint32_t *)&avpCommandsSize,
+            (uint32_t *)&avpPatchListSize,
+            params));
+    }
+
+    //calculate HUC related command size
+    uint32_t    hucCommandsSize = 0;
+    uint32_t    hucPatchListSize = 0;
+
+    if (m_hucInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_hucInterface->GetHucStateCommandSize(
+            mode,
+            (uint32_t*)&hucCommandsSize,
+            (uint32_t*)&hucPatchListSize,
+            params));
+    }
+
+    //Calc final command size
+    *commandsSize = avpCommandsSize + hucCommandsSize * 4;
+    *patchListSize = avpPatchListSize + hucPatchListSize * 4;
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS CodechalHwInterfaceG12::GetAvpPrimitiveCommandSize(
+    uint32_t                        mode,
+    uint32_t                        *commandsSize,
+    uint32_t                        *patchListSize)
+{
+    CODECHAL_HW_FUNCTION_ENTER;
+
+    //calculate AVP related commands size
+    uint32_t avpCommandsSize = 0;
+    uint32_t avpPatchListSize = 0;
+
+    if (m_avpInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_avpInterface->GetAvpPrimitiveCommandSize(
+            (uint32_t*)&avpCommandsSize,
+            (uint32_t*)&avpPatchListSize));
+    }
+
+    //calculate HUC related command size
+    uint32_t hucCommandsSize = 0;
+    uint32_t hucPatchListSize = 0;
+
+    if (m_hucInterface)
+    {
+        CODECHAL_HW_CHK_STATUS_RETURN(m_hucInterface->GetHucPrimitiveCommandSize(
+            mode,
+            (uint32_t*)&hucCommandsSize,
+            (uint32_t*)&hucPatchListSize));
+    }
+
+    //Calc final command size
+    *commandsSize = avpCommandsSize + hucCommandsSize;
+    *patchListSize = avpPatchListSize + hucPatchListSize;
+
+    return MOS_STATUS_SUCCESS;
+}
+
 
 MOS_STATUS CodechalHwInterfaceG12::SendCondBbEndCmd(
     PMOS_RESOURCE              resource,
@@ -288,6 +400,82 @@ MOS_STATUS CodechalHwInterfaceG12::SendCondBbEndCmd(
         conditionalBatchBufferEndParams.compareOperation               = compareOperation;
     }
     eStatus = m_miInterface->AddMiConditionalBatchBufferEndCmd(cmdBuffer, &conditionalBatchBufferEndParams);
+
+    return eStatus;
+}
+
+MOS_STATUS CodechalHwInterfaceG12::Initialize(
+    CodechalSetting *settings)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+
+    CODECHAL_HW_FUNCTION_ENTER;
+
+    CODECHAL_HW_CHK_STATUS_RETURN(CodechalHwInterface::Initialize(settings));
+
+    //Initialize renderHal
+    m_renderHal = (PRENDERHAL_INTERFACE)MOS_AllocAndZeroMemory(sizeof(RENDERHAL_INTERFACE));
+    CODECHAL_HW_CHK_NULL_RETURN(m_renderHal);
+    CODECHAL_HW_CHK_STATUS_RETURN(RenderHal_InitInterface(
+        m_renderHal,
+        &m_renderHalCpInterface,
+        m_osInterface));
+
+    RENDERHAL_SETTINGS RenderHalSettings;
+    RenderHalSettings.iMediaStates = 32;
+    CODECHAL_HW_CHK_STATUS_RETURN(m_renderHal->pfnInitialize(m_renderHal, &RenderHalSettings));
+
+    //set SSEU table
+    m_renderHal->sseuTable = m_ssEuTable;
+
+    return eStatus;
+}
+
+CodechalHwInterfaceG12::~CodechalHwInterfaceG12()
+{
+    if (m_renderHal != nullptr && m_renderHal->pfnDestroy != nullptr)
+    {
+        MOS_STATUS eStatus = m_renderHal->pfnDestroy(m_renderHal);
+        if (eStatus != MOS_STATUS_SUCCESS)
+        {
+            MHW_ASSERTMESSAGE("Failed to destroy RenderHal, eStatus:%d.\n", eStatus);
+        }
+
+        if (m_renderHalCpInterface)
+        {
+            MOS_Delete(m_renderHalCpInterface);
+            m_renderHalCpInterface = nullptr;
+        }
+
+        MOS_FreeMemory(m_renderHal);
+        m_renderHal = nullptr;
+    }
+
+    if (m_avpInterface)
+    {
+        MOS_Delete(m_avpInterface);
+        m_avpInterface = nullptr;
+    }
+}
+
+MOS_STATUS CodechalHwInterfaceG12::GetFilmGrainKernelInfo(
+    uint8_t*& kernelBase,
+    uint32_t& kernelSize)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+    uint8_t* kernelArrayBase = nullptr;
+
+    auto kuidCommon        = IDR_CODEC_VID_ApplyNoise_Combined;
+#if defined(ENABLE_KERNELS) && !defined(_FULL_OPEN_SOURCE)
+    kernelArrayBase = (uint8_t*)IGCODECKRN_G12;
+    CODECHAL_HW_CHK_STATUS_RETURN(CodecHalGetKernelBinaryAndSize(kernelArrayBase,
+        kuidCommon,
+        &kernelBase,
+        &kernelSize));
+#else
+    kernelBase = nullptr;
+    kernelSize = 0;
+#endif
 
     return eStatus;
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2017, Intel Corporation
+* Copyright (c) 2009-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -62,7 +62,7 @@
 #endif
 #define DDI_CODEC_GEN_MAX_ATTRIBS_TYPE             4    //VAConfigAttribRTFormat,    VAConfigAttribRateControl,    VAConfigAttribDecSliceMode,    VAConfigAttribEncPackedHeaders
 
-#define DDI_CODEC_GEN_MAX_SURFACE_ATTRIBUTES       22
+#define DDI_CODEC_GEN_MAX_SURFACE_ATTRIBUTES       24
 #define DDI_CODEC_GEN_STR_VENDOR                   "Intel iHD driver for Intel(R) Gen Graphics - " MEDIA_VERSION " (" MEDIA_VERSION_DETAILS ")"
 
 #define DDI_CODEC_GET_VTABLE(ctx)                  (ctx->vtable)
@@ -113,9 +113,16 @@
 #define DDI_VP_MAX_NUM_FILTERS  8
 
 #define DDI_VP_GEN_CONFIG_ATTRIBUTES_BASE    2048 // VP config_id starts at this value
+#define DDI_CP_GEN_CONFIG_ATTRIBUTES_BASE    4092 // CP config_id starts at this value
+#define DDI_CP_ENCRYPT_TYPES_NUM             5    // CP encryption types number
 
 // Enable unlimited output buffer, delete this build option (remove multiple output buffer) when it is verified
 #define ENABLE_ENC_UNLIMITED_OUTPUT
+
+// Max timeout for i915 bo_wait
+#define DDI_BO_MAX_TIMEOUT       (~(0x8000000000000000))
+// Negative value for infinite timeout for i915 bo_wait
+#define DDI_BO_INFINITE_TIMEOUT  (-1)
 
 typedef struct _DDI_CODEC_VC1BITPLANE_OBJECT
 {

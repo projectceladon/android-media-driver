@@ -46,11 +46,14 @@ CodechalKernelHmeMdfG12::CodechalKernelHmeMdfG12(
 
 CodechalKernelHmeMdfG12::~CodechalKernelHmeMdfG12()
 {
+    ReleaseResources();
 }
 
 MOS_STATUS CodechalKernelHmeMdfG12::ReleaseResources()
 {
     CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_encoder->m_cmDev);
 
     DestroyYUVSurfaces(m_HME4xYUVInfo);
     DestroyYUVSurfaces(m_HME16xYUVInfo);
@@ -220,28 +223,52 @@ MOS_STATUS CodechalKernelHmeMdfG12::Execute(CurbeParam &curbeParam, SurfaceParam
 
     if (m_16xMeInUse)
     {
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
-            xResolution,
-            yResolution,
-            m_threadSpace16x));
+        if(m_encoder->m_resolutionChanged && m_threadSpace16x != nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->DestroyThreadSpace(m_threadSpace16x));
+            m_threadSpace16x = nullptr;
+        }
+        if (m_threadSpace16x == nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
+                                                  xResolution,
+                                                  yResolution,
+                                                  m_threadSpace16x));
+        }
         threadSpace = m_threadSpace16x;
         cmKrn = m_cmKrnME16x;
     }
     else if (m_32xMeInUse)
     {
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
-            xResolution,
-            yResolution,
-            m_threadSpace32x));
+        if(m_encoder->m_resolutionChanged && m_threadSpace32x != nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->DestroyThreadSpace(m_threadSpace32x));
+            m_threadSpace32x = nullptr;
+        }
+        if (m_threadSpace32x == nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
+                                                  xResolution,
+                                                  yResolution,
+                                                  m_threadSpace32x));
+        }
         threadSpace = m_threadSpace32x;
         cmKrn = m_cmKrnME32x;
     }
     else
     {
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
-            xResolution,
-            yResolution,
-            m_threadSpace4x));
+        if(m_encoder->m_resolutionChanged && m_threadSpace4x != nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->DestroyThreadSpace(m_threadSpace4x));
+            m_threadSpace4x = nullptr;
+        }
+        if (m_threadSpace4x == nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(cmDev->CreateThreadSpace(
+                                                  xResolution,
+                                                  yResolution,
+                                                  m_threadSpace4x));
+        }
         threadSpace = m_threadSpace4x;
         cmKrn = m_cmKrnME4x;
     }
@@ -301,7 +328,6 @@ MOS_STATUS CodechalKernelHmeMdfG12::AllocateResources()
     MOS_ALLOC_GFXRES_PARAMS allocParamsForBuffer2D;
     PMOS_SURFACE allocSurface = nullptr;
     CmDevice* &cmDev = m_encoder->m_cmDev;
-    CmEvent *event = nullptr;
 
     if (m_4xMeSupported)
     {
@@ -312,7 +338,6 @@ MOS_STATUS CodechalKernelHmeMdfG12::AllocateResources()
                 (m_downscaledHeightInMb4x * 2 * 4 * CODECHAL_ENCODE_ME_DATA_SIZE_MULTIPLIER),
                 CM_SURFACE_FORMAT_A8,
                 m_HME4xMVSurface));
-            m_HME4xMVSurface->InitSurface(0, event);
         }
 
         if (m_4xMeDistortionBufferSupported)
@@ -328,7 +353,6 @@ MOS_STATUS CodechalKernelHmeMdfG12::AllocateResources()
                     (2 * MOS_ALIGN_CEIL((downscaledFieldHeightInMB4x * 4 * 10), 8)),
                     CM_SURFACE_FORMAT_A8,
                     m_HME4xDistortionSurface));
-                m_HME4xDistortionSurface->InitSurface(0, event);
             }
         }
     }
@@ -342,7 +366,6 @@ MOS_STATUS CodechalKernelHmeMdfG12::AllocateResources()
                 (m_downscaledHeightInMb16x * 2 * 4 * CODECHAL_ENCODE_ME_DATA_SIZE_MULTIPLIER),
                 CM_SURFACE_FORMAT_A8,
                 m_HME16xMVSurface));
-            m_HME16xMVSurface->InitSurface(0, event);
         }
     }
 
@@ -355,7 +378,6 @@ MOS_STATUS CodechalKernelHmeMdfG12::AllocateResources()
                 (m_downscaledHeightInMb32x * 2 * 4 * CODECHAL_ENCODE_ME_DATA_SIZE_MULTIPLIER),
                 CM_SURFACE_FORMAT_A8,
                 m_HME32xMVSurface));
-            m_HME32xMVSurface->InitSurface(0, event);
         }
     }
     return MOS_STATUS_SUCCESS;

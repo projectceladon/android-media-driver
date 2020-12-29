@@ -40,6 +40,7 @@
 #include "codechal_user_settings_mgr_ext.h"
 #include "vphal_user_settings_mgr_ext.h"
 #endif // _MEDIA_RESERVED
+
 #ifndef ANDROID
 #include <sys/ipc.h>   // System V IPC
 #include <sys/types.h>
@@ -48,7 +49,8 @@
 #include <unistd.h>    // fork
 #else
 #include <cutils/properties.h>
-#endif // ANDROID
+#endif //ANDROID
+
 #include "mos_utilities_specific_next.h"
 static const char* szUserFeatureFile = USER_FEATURE_FILE;
 
@@ -2177,14 +2179,16 @@ MOS_STATUS MOS_UserFeatureOpenKey(
     const char *lpSubKey,
     uint32_t   ulOptions,
     uint32_t   samDesired,
-    void       **phkResult)
+    void       **phkResult,
+    MOS_USER_FEATURE_KEY_PATH_INFO *ufInfo)
 {
     return MosUtilities::MosUserFeatureOpenKey(
         ufKey,
         lpSubKey,
         ulOptions,
         samDesired,
-        phkResult);
+        phkResult,
+        ufInfo);
 }
 
 MOS_STATUS MOS_UserFeatureCloseKey(void  *UFKey)
@@ -2820,7 +2824,6 @@ void MOS_TraceSetupInfo(uint32_t DrvVer, uint32_t PlatFamily, uint32_t RenderFam
     // not implemented
 }
 
-#define TRACE_EVENT_MAX_SIZE    4096
 void MOS_TraceEvent(
     uint16_t         usId,
     uint8_t          ucType,

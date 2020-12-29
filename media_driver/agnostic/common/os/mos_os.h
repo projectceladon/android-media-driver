@@ -75,7 +75,6 @@ extern PerfUtility *g_perfutility;
      ((sCOMP == "MOS" && sLEVEL == "DDI") && (g_perfutility->dwPerfUtilityIsEnabled & MOS_DDI)) ||        \
      ((sCOMP == "MOS" && sLEVEL == "HAL") && (g_perfutility->dwPerfUtilityIsEnabled & MOS_HAL)))
 
-#if _RELEASE_INTERNAL
 #define PERF_UTILITY_START(TAG,COMP,LEVEL)                                 \
     do                                                                     \
     {                                                                      \
@@ -124,20 +123,11 @@ static int perf_count_stop = 0;
 #define PERF_UTILITY_PRINT                         \
     do                                             \
     {                                              \
-        if (g_perfutility->dwPerfUtilityIsEnabled) \
+        if (g_perfutility->dwPerfUtilityIsEnabled && MosUtilities::MosIsProfilerDumpEnabled()) \
         {                                          \
             g_perfutility->savePerfData();         \
         }                                          \
     } while(0)
-
-#else
-#define PERF_UTILITY_START(TAG, COMP,LEVEL) do {} while(0)
-#define PERF_UTILITY_STOP(TAG, COMP,LEVEL) do {} while(0)
-#define PERF_UTILITY_START_ONCE(TAG, COMP,LEVEL) do {} while(0)
-#define PERF_UTILITY_STOP_ONCE(TAG, COMP,LEVEL) do {} while(0)
-#define PERF_UTILITY_AUTO(TAG,COMP,LEVEL) do {} while(0)
-#define PERF_UTILITY_PRINT do {} while(0)
-#endif
 
 class AutoPerfUtility
 {
@@ -205,6 +195,9 @@ private:
     ((GpuContext) == MOS_GPU_CONTEXT_VEBOX))
 #endif
 
+#define MOS_GCS_ENGINE_USED(GpuContext) (             \
+    ((GpuContext) == MOS_GPU_CONTEXT_TEE))
+
 #if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
 #define MOS_COMMAND_BUFFER_OUT_FILE        "Command_buffer_output"
 #define MOS_COMMAND_BUFFER_OUT_DIR         "Command_buffer_dumps"
@@ -238,8 +231,9 @@ enum MOS_COMPONENT
     COMPONENT_VPreP,
     COMPONENT_CP,
     COMPONENT_MEMDECOMP,
+    COMPONENT_MCPY,
 };
-C_ASSERT(COMPONENT_MEMDECOMP == 9); // When adding, update assert
+C_ASSERT(COMPONENT_MCPY == 10); // When adding, update assert
 
 //!
 //! \brief Structure to OS sync parameters
@@ -288,6 +282,13 @@ typedef enum _MOS_FORCE_VEBOX
     MOS_FORCE_VEBOX_1_2_3_4 = 0x1234
 } MOS_FORCE_VEBOX;
 
+typedef enum _MOS_SCALABILITY_ENABLE_MODE
+{
+    MOS_SCALABILITY_ENABLE_MODE_FALSE      = 0,
+    MOS_SCALABILITY_ENABLE_MODE_DEFAULT    = 0x0001,
+    MOS_SCALABILITY_ENABLE_MODE_USER_FORCE = 0x0010
+} MOS_SCALABILITY_ENABLE_MODE;
+
 #define MOS_FORCEVEBOX_VEBOXID_BITSNUM              4 //each VEBOX ID occupies 4 bits see defintion MOS_FORCE_VEBOX
 #define MOS_FORCEVEBOX_MASK                         0xf
 
@@ -316,7 +317,7 @@ typedef struct _MOS_COMMAND_BUFFER_ATTRIBUTES
     int32_t                     bEnableMediaFrameTracking;
     uint32_t                    dwMediaFrameTrackingTag;
     uint32_t                    dwMediaFrameTrackingAddrOffset;
-    MOS_RESOURCE                resMediaFrameTrackingSurface;
+    PMOS_RESOURCE               resMediaFrameTrackingSurface;
     int32_t                     bUmdSSEUEnable;
     int32_t                     bFrequencyBoost;
     void*                       pAttriVe;
@@ -436,6 +437,7 @@ typedef struct _MOS_ALLOC_GFXRES_PARAMS
     int32_t             bIsPersistent;                                          //!< [in] Optional parameter. Used to indicate that resource can not be evicted
     int32_t             bBypassMODImpl;
     int32_t             dwMemType;                                              //!< [in] Optional paramerter. Prefer memory type
+    MOS_HW_RESOURCE_DEF ResUsageType;                                           //!< [in] the resource usage type to determine the cache policy
 } MOS_ALLOC_GFXRES_PARAMS, *PMOS_ALLOC_GFXRES_PARAMS;
 
 //!
@@ -511,8 +513,8 @@ class GpuCmdResInfoDump
 {
 public:
 
-    static const GpuCmdResInfoDump *GetInstance();
-    GpuCmdResInfoDump();
+    static const GpuCmdResInfoDump *GetInstance(PMOS_CONTEXT mosCtx);
+    GpuCmdResInfoDump(PMOS_CONTEXT mosCtx);
 
     void Dump(PMOS_INTERFACE pOsInterface) const;
 
@@ -560,8 +562,8 @@ struct MosStreamState
     bool veEnable = false;                //!< Flag to indicate virtual engine enabled (Can enable VE without using virtual engine interface)
     bool phasedSubmission = false;        //!< Flag to indicate if secondary command buffers are submitted together or separately due to different OS
     bool frameSplit = true;               //!< Flag to indicate if frame split is enabled (only active when phasedSubmission is true)
-    bool hcpDecScalabilityMode = false;   //!< Hcp scalability mode
-    bool veboxScalabilityMode = false;    //!< Vebox scalability mode
+    int32_t hcpDecScalabilityMode = 0;   //!< Hcp scalability mode
+    int32_t veboxScalabilityMode  = 0;    //!< Vebox scalability mode
 
     bool ctxBasedScheduling = false;  //!< Indicate if context based scheduling is enabled in this stream
     bool multiNodeScaling = false;    //!< Flag to indicate if multi-node scaling is enabled for virtual engine (only active when ctxBasedScheduling is true)
@@ -573,13 +575,18 @@ struct MosStreamState
     bool mediaReset    = false;  //!< Flag to indicate media reset is enabled
 
     bool simIsActive = false;  //!< Flag to indicate if Simulation is enabled
-    MOS_NULL_RENDERING_FLAGS nullHwAccelerationEnable; //!< To indicate which components to enable Null HW support
+    MOS_NULL_RENDERING_FLAGS nullHwAccelerationEnable = {};     //!< To indicate which components to enable Null HW support
 
     bool usesPatchList = false;               //!< Uses patch list instead of graphic address directly
     bool usesGfxAddress = false;              //!< Uses graphic address directly instead of patch list
     bool enableKmdMediaFrameTracking = false; //!< Enable KMD Media frame tracking
     bool usesCmdBufHeaderInResize = false;    //!< Use cmd buffer header in resize
     bool usesCmdBufHeader = false;            //!< Use cmd buffer header
+
+    // GPU Reset Statistics
+    uint32_t gpuResetCount      = 0;
+    uint32_t gpuActiveBatch     = 0;
+    uint32_t gpuPendingBatch    = 0;
 
 #if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
     // Command buffer dump
@@ -873,6 +880,9 @@ typedef struct _MOS_INTERFACE
     MEDIA_SYSTEM_INFO *(* pfnGetGtSystemInfo)(
         PMOS_INTERFACE     pOsInterface);
 
+    MOS_STATUS (*pfnGetMediaEngineInfo)(
+        PMOS_INTERFACE     pOsInterface, MEDIA_ENGINE_INFO &info);
+
     void (* pfnResetOsStates) (
         PMOS_INTERFACE              pOsInterface);
 
@@ -997,11 +1007,21 @@ typedef struct _MOS_INTERFACE
         uint32_t              copyOutputOffset,
         bool                  bOutputCompressed);
 
+    MOS_STATUS(*pfnMediaCopy) (
+        PMOS_INTERFACE        pOsInterface,
+        PMOS_RESOURCE         pInputOsResource,
+        PMOS_RESOURCE         pOutputOsResource,
+        uint32_t              preferMethod);
+
     MOS_STATUS (* pfnFillResource) (
         PMOS_INTERFACE              pOsInterface,
         PMOS_RESOURCE               pResource,
         uint32_t                    dwSize,
         uint8_t                     iValue);
+
+    MOS_STATUS (*pfnUpdateResourceUsageType) (
+        PMOS_RESOURCE           pOsResource,
+        MOS_HW_RESOURCE_DEF     resUsageType);
 
     MOS_STATUS (* pfnRegisterResource) (
         PMOS_INTERFACE              pOsInterface,
@@ -1159,7 +1179,7 @@ typedef struct _MOS_INTERFACE
 
     MOS_STATUS (*pfnGetGpuStatusBufferResource) (
         PMOS_INTERFACE              pOsInterface,
-        PMOS_RESOURCE               pOsResource);
+        PMOS_RESOURCE               &pOsResource);
 
     MOS_STATUS (* pfnVerifyPatchListSize) (
         PMOS_INTERFACE              pOsInterface,
@@ -1315,7 +1335,7 @@ typedef struct _MOS_INTERFACE
     bool                            VEEnable;
 #if (_DEBUG || _RELEASE_INTERNAL)
     MOS_FORCE_VEBOX                 eForceVebox;                                  //!< Force select Vebox
-    int32_t                         bHcpDecScalabilityMode;                       //!< enable scalability decode
+    int32_t                         bHcpDecScalabilityMode;                       //!< enable scalability decode {mode: default, user force, false}
     int32_t                         bEnableDbgOvrdInVE;                           //!< It is for all scalable engines: used together with KMD VE for UMD to specify an engine directly
     int32_t                         bVeboxScalabilityMode;                        //!< Enable scalability vebox
     int32_t                         bSoftReset;                                   //!< trigger soft reset
@@ -1368,6 +1388,17 @@ MOS_STATUS Mos_AddCommand(
     PMOS_COMMAND_BUFFER pCmdBuffer,
     const void          *pCmd,
     uint32_t            dwCmdSize);
+
+//! \brief    Unified OS get uf path info
+//! \details  return a pointer to the user feature key path info
+//! \param    PMOS_CONTEXT mosContext
+//!           [in/out] Pointer to mosContext
+//! \return   MOS_USER_FEATURE_KEY_PATH_INFO*
+//!           Return a poniter to user feature path info
+//!
+MOS_USER_FEATURE_KEY_PATH_INFO *Mos_GetDeviceUfPathInfo(
+    PMOS_CONTEXT mosContext);
+
 
 #if !EMUL
 //!

@@ -31,13 +31,12 @@
 #include "mhw_sfc_g12_X.h"
 #include "mos_defs.h"
 
-namespace vp {
+using namespace vp;
 
 SfcRenderM12::SfcRenderM12(
-    PMOS_INTERFACE osInterface,
-    PMHW_SFC_INTERFACE sfcInterface,
+    VP_MHWINTERFACE &vpMhwinterface,
     PVpAllocator &allocator):
-    SfcRenderBase(osInterface, sfcInterface, allocator)
+    SfcRenderBase(vpMhwinterface, allocator)
 {
 }
 
@@ -46,22 +45,110 @@ SfcRenderM12::~SfcRenderM12()
 }
 
 MOS_STATUS SfcRenderM12::SetupSfcState(
-    PVPHAL_SFC_RENDER_DATA          sfcRenderData,
     PVP_SURFACE                     targetSurface)
 {
     MOS_STATUS                eStatus = MOS_STATUS_SUCCESS;
     PMHW_SFC_STATE_PARAMS_G12 sfcStateParamsM12 = nullptr;
 
-    VP_RENDER_CHK_STATUS_RETURN(SfcRenderBase::SetupSfcState(sfcRenderData, targetSurface));
+    VP_RENDER_CHK_STATUS_RETURN(SfcRenderBase::SetupSfcState(targetSurface));
 
     //Set SFD Line Buffer
-    VP_RENDER_CHK_NULL_RETURN(m_renderData);
-    VP_RENDER_CHK_NULL_RETURN(m_renderData->sfcStateParams);
-    sfcStateParamsM12 = static_cast<PMHW_SFC_STATE_PARAMS_G12>(m_renderData->sfcStateParams);
+    VP_RENDER_CHK_NULL_RETURN(m_renderData.sfcStateParams);
+    sfcStateParamsM12 = static_cast<PMHW_SFC_STATE_PARAMS_G12>(m_renderData.sfcStateParams);
     VP_RENDER_CHK_NULL_RETURN(sfcStateParamsM12);
-    sfcStateParamsM12->resSfdLineBuffer = Mos_ResourceIsNull(&m_SFDLineBufferSurface.OsResource) ? nullptr : &m_SFDLineBufferSurface.OsResource;
+
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resSfdLineBuffer, m_SFDLineBufferSurface));
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resAvsLineTileBuffer, m_AVSLineTileBufferSurface));
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resIefLineTileBuffer, m_IEFLineTileBufferSurface));
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resSfdLineTileBuffer, m_SFDLineTileBufferSurface));
 
     return eStatus;
 }
 
+MOS_STATUS SfcRenderM12::InitSfcStateParams()
+{
+    if (nullptr == m_sfcStateParams)
+    {
+        m_sfcStateParams = (MHW_SFC_STATE_PARAMS_G12*)MOS_AllocAndZeroMemory(sizeof(MHW_SFC_STATE_PARAMS_G12));
+    }
+    else
+    {
+        MOS_ZeroMemory(m_sfcStateParams, sizeof(MHW_SFC_STATE_PARAMS_G12));
+    }
+
+    VP_PUBLIC_CHK_NULL_RETURN(m_sfcStateParams);
+
+    m_renderData.sfcStateParams = m_sfcStateParams;
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderM12::SetCodecPipeMode(CODECHAL_STANDARD codecStandard)
+{
+    if (CODECHAL_HEVC == codecStandard ||
+        CODECHAL_VP9 == codecStandard)
+    {
+        m_pipeMode = MhwSfcInterfaceG12::SFC_PIPE_MODE_HCP;
+    }
+    else
+    {
+        return SfcRenderBase::SetCodecPipeMode(codecStandard);
+    }
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderM12::SetSfcStateInputOrderingModeHcp(
+    PMHW_SFC_STATE_PARAMS       sfcStateParams)
+{
+    if (CODECHAL_HEVC != m_videoConfig.codecStandard &&
+        CODECHAL_VP9 != m_videoConfig.codecStandard)
+    {
+        return MOS_STATUS_INVALID_PARAMETER;
+    }
+    if (CODECHAL_HEVC == m_videoConfig.codecStandard)
+    {
+        sfcStateParams->dwVDVEInputOrderingMode = (16 == m_videoConfig.hevc.lcuSize) ? MhwSfcInterfaceG12::LCU_16_16_HEVC :
+            (32 == m_videoConfig.hevc.lcuSize) ? MhwSfcInterfaceG12::LCU_32_32_HEVC : MhwSfcInterfaceG12::LCU_64_64_HEVC;
+    }
+    else if (CODECHAL_VP9 == m_videoConfig.codecStandard)
+    {
+        VPHAL_COLORPACK colorPack = VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat);
+        if (VPHAL_COLORPACK_420 == colorPack)
+        {
+            sfcStateParams->dwVDVEInputOrderingMode = MhwSfcInterfaceG12::LCU_64_64_VP9;
+        }
+        else if (VPHAL_COLORPACK_444 == colorPack)
+        {
+            sfcStateParams->dwVDVEInputOrderingMode = MhwSfcInterfaceG12::LCU_64_64_VP9_ENC;
+        }
+        else
+        {
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
+    }
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderM12::AddSfcLock(
+    PMOS_COMMAND_BUFFER            pCmdBuffer,
+    PMHW_SFC_LOCK_PARAMS           pSfcLockParams)
+{
+    VP_RENDER_CHK_NULL_RETURN(m_miInterface);
+
+    // Send SFC_LOCK command to acquire SFC pipe for Vebox
+    VP_RENDER_CHK_STATUS_RETURN(SfcRenderBase::AddSfcLock(
+        pCmdBuffer,
+        pSfcLockParams));
+
+    //insert 2 dummy VD_CONTROL_STATE packets with data=0 after every HCP_SFC_LOCK
+    if (MhwSfcInterfaceG12::SFC_PIPE_MODE_HCP == m_pipeMode && MEDIA_IS_WA(m_waTable, Wa_14010222001))
+    {
+        MHW_MI_VD_CONTROL_STATE_PARAMS vdCtrlParam;
+        MOS_ZeroMemory(&vdCtrlParam, sizeof(MHW_MI_VD_CONTROL_STATE_PARAMS));
+        for (int i = 0; i < 2; i++)
+        {
+            VP_RENDER_CHK_STATUS_RETURN(static_cast<MhwMiInterfaceG12 *>(m_miInterface)->AddMiVdControlStateCmd(pCmdBuffer, &vdCtrlParam));
+        }
+    }
+    return MOS_STATUS_SUCCESS;
 }

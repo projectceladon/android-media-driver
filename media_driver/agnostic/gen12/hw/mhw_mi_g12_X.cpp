@@ -317,6 +317,17 @@ MOS_STATUS MhwMiInterfaceG12::AddMiStoreRegisterMemCmd(
         cmd->DW1.RegisterAddress = params->dwRegister >> 2;
     }
 
+    if (params->dwOption == CCS_HW_FRONT_END_MMIO_REMAP)
+    {
+        MOS_GPU_CONTEXT gpuContext = m_osInterface->pfnGetGpuContext(m_osInterface);
+
+        if (MOS_RCS_ENGINE_USED(gpuContext))
+        {
+            params->dwRegister &= M_CCS_HW_FRONT_END_MMIO_MASK;
+            params->dwRegister += M_MMIO_CCS0_HW_FRONT_END_BASE_BEGIN;
+        }
+    }
+
     cmd->DW0.MmioRemapEnable = IsRemappingMMIO(params->dwRegister);
 
     return MOS_STATUS_SUCCESS;
@@ -459,9 +470,16 @@ MOS_STATUS MhwMiInterfaceG12::AddMiVdControlStateCmd(
     {
         cmd.DW0.MediaInstructionCommand =
             mhw_mi_g12_X::VD_CONTROL_STATE_CMD::MEDIA_INSTRUCTION_COMMAND_VDCONTROLSTATEFORHCP;
-
-        cmd.DW0.MediaInstructionOpcode =
-            mhw_mi_g12_X::VD_CONTROL_STATE_CMD::MEDIA_INSTRUCTION_OPCODE_CODECENGINENAMEFORHCP;
+        if (params->avpEnabled)
+        {
+            cmd.DW0.MediaInstructionOpcode =
+                mhw_mi_g12_X::VD_CONTROL_STATE_CMD::MEDIA_INSTRUCTION_OPCODE_CODECENGINENAMEFORAVP;
+        }
+        else
+        {
+            cmd.DW0.MediaInstructionOpcode =
+                mhw_mi_g12_X::VD_CONTROL_STATE_CMD::MEDIA_INSTRUCTION_OPCODE_CODECENGINENAMEFORHCP;
+        }
 
         cmd.DW1.PipelineInitialization  = params->initialization;
         cmd.DW2.MemoryImplicitFlush     = params->memoryImplicitFlush;
@@ -551,7 +569,8 @@ MOS_STATUS MhwMiInterfaceG12::SetWatchdogTimerThreshold(uint32_t frameWidth, uin
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_MEDIA_RESET_TH_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     if (userFeatureData.u32Data != 0)
     {
         MediaResetParam.watchdogCountThreshold = userFeatureData.u32Data;
@@ -683,6 +702,123 @@ MOS_STATUS MhwMiInterfaceG12::AddWatchdogTimerStopCmd(
     MHW_MI_CHK_STATUS(AddMiLoadRegisterImmCmd(
         cmdBuffer,
         &registerImmParams));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MhwMiInterfaceG12::AddMediaStateFlush(
+    PMOS_COMMAND_BUFFER          cmdBuffer,
+    PMHW_BATCH_BUFFER            batchBuffer,
+    PMHW_MEDIA_STATE_FLUSH_PARAM params)
+{
+    MHW_MI_CHK_STATUS(MhwMiInterfaceGeneric<mhw_mi_g12_X>::AddMediaStateFlush(cmdBuffer, batchBuffer, params));
+
+    mhw_mi_g12_X::MEDIA_STATE_FLUSH_CMD cmd;
+
+    if (params != nullptr)
+    {
+        cmd.DW1.FlushToGo                 = params->bFlushToGo;
+        cmd.DW1.InterfaceDescriptorOffset = params->ui8InterfaceDescriptorOffset;
+    }
+
+    MHW_MI_CHK_STATUS(Mhw_AddCommandCmdOrBB(cmdBuffer, batchBuffer, &cmd, cmd.byteSize));
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    if (batchBuffer)
+    {
+        batchBuffer->iLastCurrent = batchBuffer->iCurrent;
+    }
+#endif
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MhwMiInterfaceG12::SkipMiBatchBufferEndBb(
+    PMHW_BATCH_BUFFER batchBuffer)
+{
+    MHW_FUNCTION_ENTER;
+
+    MHW_MI_CHK_STATUS(MhwMiInterfaceGeneric<mhw_mi_g12_X>::SkipMiBatchBufferEndBb(batchBuffer));
+
+    auto waTable = m_osInterface->pfnGetWaTable(m_osInterface);
+    MHW_MI_CHK_NULL(waTable);
+
+    // This WA does not apply for video or other engines, render requirement only
+    bool isRender =
+        MOS_RCS_ENGINE_USED(m_osInterface->pfnGetGpuContext(m_osInterface));
+
+    if (isRender && (MEDIA_IS_WA(waTable, WaMSFWithNoWatermarkTSGHang) ||
+                        MEDIA_IS_WA(waTable, WaAddMediaStateFlushCmd)))
+    {
+        mhw_mi_g12_X::MEDIA_STATE_FLUSH_CMD FlushCmd;
+        MHW_MI_CHK_STATUS(Mhw_AddCommandBB(
+            batchBuffer,
+            nullptr,
+            FlushCmd.byteSize));
+    }
+
+    mhw_mi_g12_X::MI_BATCH_BUFFER_END_CMD cmd;
+    MHW_MI_CHK_STATUS(Mhw_AddCommandBB(
+        batchBuffer,
+        nullptr,
+        cmd.byteSize));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MhwMiInterfaceG12::AddMiFlushDwCmd(
+    PMOS_COMMAND_BUFFER     cmdBuffer,
+    PMHW_MI_FLUSH_DW_PARAMS params)
+{
+    MHW_FUNCTION_ENTER;
+
+    MHW_MI_CHK_STATUS(MhwMiInterfaceGeneric<mhw_mi_g12_X>::AddMiFlushDwCmd(cmdBuffer, params));
+
+    mhw_mi_g12_X::MI_FLUSH_DW_CMD cmd;
+
+    // set the protection bit based on CP status
+    MHW_MI_CHK_STATUS(m_cpInterface->SetProtectionSettingsForMiFlushDw(m_osInterface, &cmd));
+
+    cmd.DW0.VideoPipelineCacheInvalidate = params->bVideoPipelineCacheInvalidate;
+    cmd.DW0.PostSyncOperation = cmd.POST_SYNC_OPERATION_NOWRITE;
+    cmd.DW3_4.Value[0]        = params->dwDataDW1;
+
+    if (params->pOsResource)
+    {
+        cmd.DW0.PostSyncOperation = cmd.POST_SYNC_OPERATION_WRITEIMMEDIATEDATA;
+        cmd.DW1_2.DestinationAddressType = UseGlobalGtt.m_vcs;
+
+        MHW_RESOURCE_PARAMS resourceParams;
+        MOS_ZeroMemory(&resourceParams, sizeof(resourceParams));
+        resourceParams.presResource = params->pOsResource;
+        resourceParams.dwOffset     = params->dwResourceOffset;
+        resourceParams.pdwCmd          = cmd.DW1_2.Value;
+        resourceParams.dwLocationInCmd = 1;
+        resourceParams.dwLsbNum        = MHW_COMMON_MI_FLUSH_DW_SHIFT;
+        resourceParams.HwCommandType   = MOS_MI_FLUSH_DW;
+        resourceParams.bIsWritable     = true;
+
+        MHW_MI_CHK_STATUS(AddResourceToCmd(
+            m_osInterface,
+            cmdBuffer,
+            &resourceParams));
+    }
+
+    if (params->postSyncOperation)
+    {
+        cmd.DW0.PostSyncOperation = params->postSyncOperation;
+    }
+
+    if (params->dwDataDW2 || params->bQWordEnable)
+    {
+        cmd.DW3_4.Value[1] = params->dwDataDW2;
+    }
+    else
+    {
+        cmd.DW0.DwordLength--;
+    }
+
+    MHW_MI_CHK_STATUS(Mos_AddCommand(cmdBuffer, &cmd, cmd.byteSize));
 
     return MOS_STATUS_SUCCESS;
 }

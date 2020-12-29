@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2016-2019, Intel Corporation
+* Copyright (c) 2016-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1019,7 +1019,7 @@ MOS_STATUS CodecHalDecodeScalability_SwitchGpuContext(
         MOS_ZeroMemory(&UserFeatureWriteData, sizeof(UserFeatureWriteData));
         UserFeatureWriteData.Value.i32Data = pScalabilityState->bFESeparateSubmission;
         UserFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_SCALABILITY_FE_SEPARATE_SUBMISSION_IN_USE_ID;
-        MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);
+        MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, pOsInterface->pOsContext);
     }
 #endif
 
@@ -1439,7 +1439,7 @@ MOS_STATUS CodechalDecodeScalability_ConstructParmsForGpuCtxCreation(
             }
         }
         initParams.usingSFC             = sfcInUse;
-        initParams.usingSecureDecode    = codecHalSetting->DecodeEncType();
+        initParams.usingSecureDecode    = codecHalSetting->secureMode;
         CODECHAL_DECODE_CHK_STATUS_RETURN(pScalState->pfnDecidePipeNum(
             pScalState,
             &initParams));
@@ -1990,21 +1990,24 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState (
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_MODE_SWITCH_THRESHOLD1_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dwHcpDecModeSwtichTh1Width = UserFeatureData.u32Data;
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_MODE_SWITCH_THRESHOLD2_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dwHcpDecModeSwtichTh2Width = UserFeatureData.u32Data;
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_SCALABILITY_OVERRIDE_SPLIT_WIDTH_IN_MINCB,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dbgOvrdWidthInMinCb = UserFeatureData.u32Data;
 #endif
 
@@ -2076,7 +2079,8 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState (
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_ALWAYS_FRAME_SPLIT_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->bAlwaysFrameSplit = UserFeatureData.u32Data ? true : false;
 #endif
 

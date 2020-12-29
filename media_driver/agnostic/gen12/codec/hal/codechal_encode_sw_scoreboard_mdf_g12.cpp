@@ -108,14 +108,23 @@ MOS_STATUS CodechalEncodeSwScoreboardMdfG12::Execute(KernelParams *params)
     uint32_t threadCount = dwResolutionX * dwResolutionY;
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_cmKrn->SetThreadCount(threadCount));
 
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_encoder->m_cmDev->CreateThreadSpace(
-        dwResolutionX,
-        dwResolutionY,
-        m_threadSpace));
-
-    if (m_groupIdSelectSupported)
+    if(m_encoder->m_resolutionChanged && m_threadSpace != nullptr)
     {
-        m_threadSpace->SetMediaWalkerGroupSelect((CM_MW_GROUP_SELECT)m_groupId);
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_encoder->m_cmDev->DestroyThreadSpace(m_threadSpace));
+        m_threadSpace = nullptr;
+    }
+
+    if (m_threadSpace == nullptr)
+    {
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_encoder->m_cmDev->CreateThreadSpace(
+                                              dwResolutionX,
+                                              dwResolutionY,
+                                              m_threadSpace));
+
+        if (m_groupIdSelectSupported)
+        {
+            m_threadSpace->SetMediaWalkerGroupSelect((CM_MW_GROUP_SELECT)m_groupId);
+        }
     }
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_cmKrn->AssociateThreadSpace(m_threadSpace));
@@ -187,6 +196,9 @@ MOS_STATUS CodechalEncodeSwScoreboardMdfG12::SetupSurfaces()
 MOS_STATUS CodechalEncodeSwScoreboardMdfG12::ReleaseResources()
 {
     CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_encoder->m_cmDev);
+
     if (m_scoreboardSurface)
     {
         m_scoreboardSurface->NotifyUmdResourceChanged(nullptr);

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,10 +30,22 @@
 #include "mos_resource_defs.h"
 #include "hal_oca_interface.h"
 #include "vp_render_sfc_m12.h"
+#include "vp_render_ief.h"
+#include "vp_feature_caps.h"
+#include "vp_platform_interface.h"
 
 namespace vp {
 
 #define INTERP(x0, x1, x, y0, y1)   ((uint32_t) floor(y0+(x-x0)*(y1-y0)/(double)(x1-x0)))
+
+const uint32_t  VpVeboxCmdPacket::m_satP1Table[MHW_STE_FACTOR_MAX + 1] = {
+    0x00000000, 0xfffffffe, 0xfffffffc, 0xfffffffa, 0xfffffff6, 0xfffffff4, 0xfffffff2, 0xfffffff0, 0xffffffee, 0xffffffec };
+
+const uint32_t   VpVeboxCmdPacket::m_satS0Table[MHW_STE_FACTOR_MAX + 1] = {
+    0x000000ef, 0x00000100, 0x00000113, 0x00000129, 0x0000017a, 0x000001a2, 0x000001d3, 0x00000211, 0x00000262, 0x000002d1 };
+
+const uint32_t   VpVeboxCmdPacket::m_satS1Table[MHW_STE_FACTOR_MAX + 1] = {
+    0x000000ab, 0x00000080, 0x00000066, 0x00000055, 0x000000c2, 0x000000b9, 0x000000b0, 0x000000a9, 0x000000a2, 0x0000009c };
 
 void VpVeboxCmdPacket::SetupSurfaceStates(
     bool                                    bDiVarianceEnable,
@@ -80,6 +92,8 @@ MOS_STATUS VpVeboxCmdPacket::SetupVeboxState(
     pVeboxMode->DIOutputFrames = m_DIOutputFrames;
     pVeboxMode->DisableEncoderStatistics = true;
     pVeboxMode->DisableTemporalDenoiseFilter = false;
+
+    pVeboxMode->ColorGamutCompressionEnable = m_PacketCaps.bCGC;
 
     pVeboxStateCmdParams->bUseVeboxHeapKernelResource = UseKernelResource();
 
@@ -133,26 +147,6 @@ MOS_STATUS VpVeboxCmdPacket::InitCmdBufferWithVeParams(
         (PRENDERHAL_GENERIC_PROLOG_PARAMS)&genericPrologParamsG12));
 
     return eStatus;
-}
-
-MOS_STATUS VpVeboxCmdPacket::InitSfcStateParams()
-{
-    if (!m_sfcRenderData.sfcStateParams)
-    {
-        m_sfcRenderData.sfcStateParams = (MHW_SFC_STATE_PARAMS_G12*)MOS_AllocAndZeroMemory(sizeof(MHW_SFC_STATE_PARAMS_G12));
-    }
-    else
-    {
-        MOS_ZeroMemory(m_sfcRenderData.sfcStateParams, sizeof(MHW_SFC_STATE_PARAMS_G12));
-    }
-
-    if (!m_sfcRenderData.sfcStateParams)
-    {
-        VP_RENDER_ASSERTMESSAGE("No Space for params allocation");
-        return MOS_STATUS_NO_SPACE;
-    }
-
-    return MOS_STATUS_SUCCESS;
 }
 
 //!
@@ -271,22 +265,14 @@ bool VpVeboxCmdPacket::IsFormatMMCSupported(MOS_FORMAT Format)
 MOS_STATUS VpVeboxCmdPacket::SetSfcMmcParams()
 {
     VP_FUNC_CALL();
-
+    VP_PUBLIC_CHK_NULL_RETURN(m_sfcRender);
     VP_PUBLIC_CHK_NULL_RETURN(m_renderTarget);
-    VP_PUBLIC_CHK_NULL_RETURN(m_sfcRenderData.sfcStateParams);
+    VP_PUBLIC_CHK_NULL_RETURN(m_renderTarget->osSurface);
+    VP_PUBLIC_CHK_NULL_RETURN(m_mmc);
 
-    if (m_renderTarget->osSurface->CompressionMode               &&
-        IsFormatMMCSupported(m_renderTarget->osSurface->Format)  &&
-        m_renderTarget->osSurface->TileType == MOS_TILE_Y        &&
-        m_mmc->IsMmcEnabled())
-    {
-        m_sfcRenderData.sfcStateParams->bMMCEnable = true;
-        m_sfcRenderData.sfcStateParams->MMCMode    = m_renderTarget->osSurface->CompressionMode;
-    }
-    else
-    {
-        m_sfcRenderData.sfcStateParams->bMMCEnable = false;
-    }
+    VP_PUBLIC_CHK_STATUS_RETURN(m_sfcRender->SetMmcParams(m_renderTarget->osSurface,
+                                                        IsFormatMMCSupported(m_renderTarget->osSurface->Format),
+                                                        m_mmc->IsMmcEnabled()));
 
     return MOS_STATUS_SUCCESS;
 }
@@ -305,52 +291,13 @@ VP_SURFACE *VpVeboxCmdPacket::GetSurface(SurfaceType type)
 
 MOS_STATUS VpVeboxCmdPacket::SetScalingParams(PSFC_SCALING_PARAMS scalingParams)
 {
-    VP_RENDER_CHK_NULL_RETURN(scalingParams);
+    VP_PUBLIC_CHK_NULL_RETURN(scalingParams);
     // Scaing only can be apply to SFC path
     if (m_PacketCaps.bSFC)
     {
-        // Adjust output width/height according to rotation.
-        if (VPHAL_ROTATION_90                   == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATION_270                  == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATE_90_MIRROR_VERTICAL     == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATE_90_MIRROR_HORIZONTAL   == m_sfcRenderData.SfcRotation)
-        {
-            m_sfcRenderData.sfcStateParams->dwOutputFrameWidth         = scalingParams->dwOutputFrameHeight;
-            m_sfcRenderData.sfcStateParams->dwOutputFrameHeight        = scalingParams->dwOutputFrameWidth;
-        }
-        else
-        {
-            m_sfcRenderData.sfcStateParams->dwOutputFrameWidth         = scalingParams->dwOutputFrameWidth;
-            m_sfcRenderData.sfcStateParams->dwOutputFrameHeight        = scalingParams->dwOutputFrameHeight;
-        }
-        m_sfcRenderData.sfcStateParams->dwInputFrameHeight             = scalingParams->dwInputFrameHeight;
-        m_sfcRenderData.sfcStateParams->dwInputFrameWidth              = scalingParams->dwInputFrameWidth;
+        VP_PUBLIC_CHK_NULL_RETURN(m_sfcRender);
+        VP_PUBLIC_CHK_STATUS_RETURN(m_sfcRender->SetScalingParams(scalingParams));
 
-        m_sfcRenderData.sfcStateParams->dwAVSFilterMode                = scalingParams->dwAVSFilterMode;
-        m_sfcRenderData.sfcStateParams->dwSourceRegionHeight           = scalingParams->dwSourceRegionHeight;
-        m_sfcRenderData.sfcStateParams->dwSourceRegionWidth            = scalingParams->dwSourceRegionWidth;
-        m_sfcRenderData.sfcStateParams->dwSourceRegionVerticalOffset   = scalingParams->dwSourceRegionVerticalOffset;
-        m_sfcRenderData.sfcStateParams->dwSourceRegionHorizontalOffset = scalingParams->dwSourceRegionHorizontalOffset;
-        m_sfcRenderData.sfcStateParams->dwScaledRegionHeight           = scalingParams->dwScaledRegionHeight;
-        m_sfcRenderData.sfcStateParams->dwScaledRegionWidth            = scalingParams->dwScaledRegionWidth;
-        m_sfcRenderData.sfcStateParams->dwScaledRegionVerticalOffset   = scalingParams->dwScaledRegionVerticalOffset;
-        m_sfcRenderData.sfcStateParams->dwScaledRegionHorizontalOffset = scalingParams->dwScaledRegionHorizontalOffset;
-        m_sfcRenderData.sfcStateParams->fAVSXScalingRatio              = scalingParams->fAVSXScalingRatio;
-        m_sfcRenderData.sfcStateParams->fAVSYScalingRatio              = scalingParams->fAVSYScalingRatio;
-
-        m_sfcRenderData.bScaling = ((scalingParams->fAVSXScalingRatio == 1.0F) && (scalingParams->fAVSYScalingRatio == 1.0F)) ?
-            false : true;
-
-        m_sfcRenderData.fScaleX = scalingParams->fAVSXScalingRatio;
-        m_sfcRenderData.fScaleY = scalingParams->fAVSYScalingRatio;
-
-        // ColorFill/Alpha settings
-        m_sfcRenderData.pColorFillParams            = &(scalingParams->sfcColorfillParams);
-        m_sfcRenderData.sfcStateParams->fAlphaPixel = scalingParams->sfcColorfillParams.fAlphaPixel;
-        m_sfcRenderData.sfcStateParams->fColorFillAPixel  = scalingParams->sfcColorfillParams.fColorFillAPixel;
-        m_sfcRenderData.sfcStateParams->fColorFillUGPixel = scalingParams->sfcColorfillParams.fColorFillUGPixel;
-        m_sfcRenderData.sfcStateParams->fColorFillVBPixel = scalingParams->sfcColorfillParams.fColorFillVBPixel;
-        m_sfcRenderData.sfcStateParams->fColorFillYRPixel = scalingParams->sfcColorfillParams.fColorFillYRPixel;
         //---------------------------------
         // Set SFC State:  mmc
         //---------------------------------
@@ -363,58 +310,23 @@ MOS_STATUS VpVeboxCmdPacket::SetScalingParams(PSFC_SCALING_PARAMS scalingParams)
         VP_RENDER_NORMALMESSAGE("Scaling is enabled in SFC, pls recheck the features enabling in SFC");
         return MOS_STATUS_INVALID_PARAMETER;
     }
-    return MOS_STATUS_SUCCESS;
 }
 
 MOS_STATUS VpVeboxCmdPacket::SetSfcCSCParams(PSFC_CSC_PARAMS cscParams)
 {
-    VP_RENDER_CHK_NULL_RETURN(cscParams);
+    VP_PUBLIC_CHK_NULL_RETURN(cscParams);
 
     if (m_PacketCaps.bSFC)
     {
-        m_sfcRenderData.bIEF           = cscParams->bIEFEnable;
-        m_sfcRenderData.bCSC           = cscParams->bCSCEnabled;
-        m_sfcRenderData.pIefParams     = cscParams->iefParams;
-        m_sfcRenderData.SfcInputCspace = cscParams->inputColorSpcase;
-        m_sfcRenderData.SfcInputFormat = cscParams->inputFormat;
-
-        // ARGB8,ABGR10,A16B16G16R16,VYUY and YVYU output format need to enable swap
-        if (cscParams->outputFormat == Format_X8R8G8B8 ||
-            cscParams->outputFormat == Format_A8R8G8B8 ||
-            cscParams->outputFormat == Format_R10G10B10A2 ||
-            cscParams->outputFormat == Format_A16B16G16R16 ||
-            cscParams->outputFormat == Format_VYUY ||
-            cscParams->outputFormat == Format_YVYU)
-        {
-            m_sfcRenderData.sfcStateParams->bRGBASwapEnable = true;
-        }
-        else
-        {
-            m_sfcRenderData.sfcStateParams->bRGBASwapEnable = false;
-        }
-        m_sfcRenderData.sfcStateParams->bInputColorSpace = cscParams->bInputColorSpace;
-
-        // Chromasitting config
-        // config SFC chroma up sampling
-        m_sfcRenderData.bForcePolyPhaseCoefs   = cscParams->bChromaUpSamplingEnable;
-        m_sfcRenderData.SfcSrcChromaSiting     = cscParams->sfcSrcChromaSiting;
-        m_sfcRenderData.inputChromaSubSampling = cscParams->inputChromaSubSampling;
-
-        // 8-Tap chroma filter enabled or not
-        m_sfcRenderData.sfcStateParams->b8tapChromafiltering = cscParams->b8tapChromafiltering;
-
-        // config SFC chroma down sampling
-        m_sfcRenderData.chromaDownSamplingHorizontalCoef = cscParams->chromaDownSamplingHorizontalCoef;
-        m_sfcRenderData.chromaDownSamplingVerticalCoef   = cscParams->chromaDownSamplingVerticalCoef;
-
+        VP_PUBLIC_CHK_NULL_RETURN(m_sfcRender);
+        VP_PUBLIC_CHK_STATUS_RETURN(m_sfcRender->SetCSCParams(cscParams));
+        return MOS_STATUS_SUCCESS;
     }
     else
     {
         VP_RENDER_NORMALMESSAGE("CSC/IEF for Output is enabled in SFC, pls recheck the features enabling in SFC");
         return MOS_STATUS_INVALID_PARAMETER;
     }
-
-    return MOS_STATUS_SUCCESS;
 }
 
 MOS_STATUS VpVeboxCmdPacket::SetVeboxBeCSCParams(PVEBOX_CSC_PARAMS cscParams)
@@ -537,24 +449,13 @@ MOS_STATUS VpVeboxCmdPacket::SetVeboxChromasitingParams(PVEBOX_CSC_PARAMS cscPar
 
 MOS_STATUS VpVeboxCmdPacket::SetSfcRotMirParams(PSFC_ROT_MIR_PARAMS rotMirParams)
 {
-    VP_RENDER_CHK_NULL_RETURN(rotMirParams);
+    VP_PUBLIC_CHK_NULL_RETURN(rotMirParams);
 
     if (m_PacketCaps.bSFC)
     {
-        m_sfcRenderData.SfcRotation   = rotMirParams->rotationMode;
-        m_sfcRenderData.bMirrorEnable = rotMirParams->bMirrorEnable;
-        m_sfcRenderData.mirrorType  = rotMirParams->mirrorType;
-
-        // Adjust output width/height according to rotation.
-        if (VPHAL_ROTATION_90                   == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATION_270                  == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATE_90_MIRROR_VERTICAL     == m_sfcRenderData.SfcRotation ||
-            VPHAL_ROTATE_90_MIRROR_HORIZONTAL   == m_sfcRenderData.SfcRotation)
-        {
-            uint32_t width = m_sfcRenderData.sfcStateParams->dwOutputFrameWidth;
-            m_sfcRenderData.sfcStateParams->dwOutputFrameWidth  = m_sfcRenderData.sfcStateParams->dwOutputFrameHeight;
-            m_sfcRenderData.sfcStateParams->dwOutputFrameHeight = width;
-        }
+        VP_PUBLIC_CHK_NULL_RETURN(m_sfcRender);
+        VP_PUBLIC_CHK_STATUS_RETURN(m_sfcRender->SetRotMirParams(rotMirParams));
+        return MOS_STATUS_SUCCESS;
     }
     else
     {
@@ -562,7 +463,6 @@ MOS_STATUS VpVeboxCmdPacket::SetSfcRotMirParams(PSFC_ROT_MIR_PARAMS rotMirParams
         return MOS_STATUS_INVALID_PARAMETER;
     }
 
-    return MOS_STATUS_SUCCESS;
 }
 
 //!
@@ -688,6 +588,108 @@ MOS_STATUS VpVeboxCmdPacket::SetDnParams(
     // bDNDITopFirst in DNDI parameters need be configured during SetDIParams.
 
     return eStatus;
+}
+
+MOS_STATUS VpVeboxCmdPacket::SetSteParams(
+    PVEBOX_STE_PARAMS                    pSteParams)
+{
+    VpVeboxRenderData               *pRenderData = GetLastExecRenderData();
+    MHW_VEBOX_IECP_PARAMS&           mhwVeboxIecpParams = pRenderData->GetIECPParams();
+
+    VP_RENDER_ASSERT(pSteParams);
+    VP_RENDER_ASSERT(pRenderData);
+
+    if (pSteParams->bEnableSTE)
+    {
+        pRenderData->IECP.STE.bSteEnabled = true;
+        mhwVeboxIecpParams.ColorPipeParams.bActive = true;
+        mhwVeboxIecpParams.ColorPipeParams.bEnableSTE = true;
+
+        if (pSteParams->dwSTEFactor > MHW_STE_FACTOR_MAX)
+        {
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.dwSTEFactor = MHW_STE_FACTOR_MAX;
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satP1 = m_satP1Table[MHW_STE_FACTOR_MAX];
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satS0 = m_satS0Table[MHW_STE_FACTOR_MAX];
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satS1 = m_satS1Table[MHW_STE_FACTOR_MAX];
+        }
+        else
+        {
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.dwSTEFactor = pSteParams->dwSTEFactor;
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satP1 = m_satP1Table[pSteParams->dwSTEFactor];
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satS0 = m_satS0Table[pSteParams->dwSTEFactor];
+            mhwVeboxIecpParams.ColorPipeParams.SteParams.satS1 = m_satS1Table[pSteParams->dwSTEFactor];
+        }
+    }
+    else
+    {
+        pRenderData->IECP.STE.bSteEnabled = false;
+        mhwVeboxIecpParams.ColorPipeParams.bEnableSTE = false;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpVeboxCmdPacket::SetTccParams(
+    PVEBOX_TCC_PARAMS                    pTccParams)
+{
+    VpVeboxRenderData               *pRenderData = GetLastExecRenderData();
+    MHW_VEBOX_IECP_PARAMS&           mhwVeboxIecpParams = pRenderData->GetIECPParams();
+
+    VP_RENDER_ASSERT(pTccParams);
+    VP_RENDER_ASSERT(pRenderData);
+
+    if (pTccParams->bEnableTCC)
+    {
+        pRenderData->IECP.TCC.bTccEnabled = true;
+        mhwVeboxIecpParams.ColorPipeParams.bActive = true;
+        mhwVeboxIecpParams.ColorPipeParams.bEnableTCC = true;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Magenta = pTccParams->Magenta;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Red = pTccParams->Red;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Yellow = pTccParams->Yellow;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Green = pTccParams->Green;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Cyan = pTccParams->Cyan;
+        mhwVeboxIecpParams.ColorPipeParams.TccParams.Blue = pTccParams->Blue;
+    }
+    else
+    {
+        pRenderData->IECP.TCC.bTccEnabled = false;
+        mhwVeboxIecpParams.ColorPipeParams.bEnableTCC = false;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpVeboxCmdPacket::SetProcampParams(
+    PVEBOX_PROCAMP_PARAMS                    pProcampParams)
+{
+    VpVeboxRenderData               *pRenderData = GetLastExecRenderData();
+    MHW_VEBOX_IECP_PARAMS&           mhwVeboxIecpParams = pRenderData->GetIECPParams();
+
+    VP_RENDER_ASSERT(pProcampParams);
+    VP_RENDER_ASSERT(pRenderData);
+
+    if (pProcampParams->bEnableProcamp)
+    {
+        pRenderData->IECP.PROCAMP.bProcampEnabled = true;
+        mhwVeboxIecpParams.ProcAmpParams.bActive = true;
+        mhwVeboxIecpParams.ProcAmpParams.bEnabled = true;
+        mhwVeboxIecpParams.ProcAmpParams.brightness = (uint32_t)MOS_F_ROUND(pProcampParams->fBrightness * 16.0F);  // S7.4
+        mhwVeboxIecpParams.ProcAmpParams.contrast   = (uint32_t)MOS_UF_ROUND(pProcampParams->fContrast * 128.0F);  // U4.7
+        mhwVeboxIecpParams.ProcAmpParams.sinCS      = (uint32_t)MOS_F_ROUND(sin(MHW_DEGREE_TO_RADIAN(pProcampParams->fHue)) *
+                                                         pProcampParams->fContrast *
+                                                         pProcampParams->fSaturation * 256.0F);  // S7.8
+        mhwVeboxIecpParams.ProcAmpParams.cosCS      = (uint32_t)MOS_F_ROUND(cos(MHW_DEGREE_TO_RADIAN(pProcampParams->fHue)) *
+                                                         pProcampParams->fContrast *
+                                                         pProcampParams->fSaturation * 256.0F);  // S7.8
+    }
+    else
+    {
+        pRenderData->IECP.PROCAMP.bProcampEnabled = false;
+        mhwVeboxIecpParams.ProcAmpParams.bActive = false;
+        mhwVeboxIecpParams.ProcAmpParams.bEnabled = false;
+    }
+
+    return MOS_STATUS_SUCCESS;
 }
 
 MOS_STATUS VpVeboxCmdPacket::SetupDiIecpState(
@@ -927,7 +929,6 @@ MOS_STATUS VpVeboxCmdPacket::SendVeboxCmd(MOS_COMMAND_BUFFER* commandBuffer)
     MHW_MI_FLUSH_DW_PARAMS                  FlushDwParams;
     PMHW_VEBOX_INTERFACE                    pVeboxInterface;
     RENDERHAL_GENERIC_PROLOG_PARAMS         GenericPrologParams;
-    MOS_RESOURCE                            GpuStatusBuffer;
 
     eStatus                 = MOS_STATUS_SUCCESS;
     pVeboxInterface         = m_hwInterface->m_veboxInterface;
@@ -938,7 +939,6 @@ MOS_STATUS VpVeboxCmdPacket::SendVeboxCmd(MOS_COMMAND_BUFFER* commandBuffer)
     eStatus = PrepareVeboxCmd(
                   commandBuffer,
                   GenericPrologParams,
-                  GpuStatusBuffer,
                   iRemaining);
 
     if (eStatus != MOS_STATUS_SUCCESS)
@@ -988,12 +988,12 @@ void VpVeboxCmdPacket::CmdErrorHanlde(
 MOS_STATUS VpVeboxCmdPacket::PrepareVeboxCmd(
     MOS_COMMAND_BUFFER*                      CmdBuffer,
     RENDERHAL_GENERIC_PROLOG_PARAMS&         GenericPrologParams,
-    MOS_RESOURCE&                            GpuStatusBuffer,
     int32_t&                                 iRemaining)
 {
     MOS_STATUS                              eStatus      = MOS_STATUS_SUCCESS;
     PMOS_INTERFACE                          pOsInterface = m_hwInterface->m_osInterface;
     VpVeboxRenderData                       *pRenderData  = GetLastExecRenderData();
+    PMOS_RESOURCE                           gpuStatusBuffer = nullptr;
 
     VP_RENDER_CHK_NULL_RETURN(CmdBuffer);
     VP_RENDER_CHK_NULL_RETURN(pOsInterface);
@@ -1017,13 +1017,13 @@ MOS_STATUS VpVeboxCmdPacket::PrepareVeboxCmd(
      if(pOsInterface->bEnableKmdMediaFrameTracking)
      {
          // Get GPU Status buffer
-         VP_RENDER_CHK_STATUS_RETURN(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, &GpuStatusBuffer));
-
+         VP_RENDER_CHK_STATUS_RETURN(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, gpuStatusBuffer));
+         VP_RENDER_CHK_NULL_RETURN(gpuStatusBuffer);
          // Register the buffer
-         VP_RENDER_CHK_STATUS_RETURN(pOsInterface->pfnRegisterResource(pOsInterface, &GpuStatusBuffer, true, true));
+         VP_RENDER_CHK_STATUS_RETURN(pOsInterface->pfnRegisterResource(pOsInterface, gpuStatusBuffer, true, true));
 
          GenericPrologParams.bEnableMediaFrameTracking = true;
-         GenericPrologParams.presMediaFrameTrackingSurface = &GpuStatusBuffer;
+         GenericPrologParams.presMediaFrameTrackingSurface = gpuStatusBuffer;
          GenericPrologParams.dwMediaFrameTrackingTag = pOsInterface->pfnGetGpuStatusTag(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
          GenericPrologParams.dwMediaFrameTrackingAddrOffset = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
 
@@ -1052,7 +1052,7 @@ MOS_STATUS VpVeboxCmdPacket::RenderVeboxCmd(
     bool                                    bDiVarianceEnable;
     const MHW_VEBOX_HEAP                    *pVeboxHeap = nullptr;
     VpVeboxRenderData                       *pRenderData = GetLastExecRenderData();
-    MediaPerfProfiler                       *pPerfProfiler;
+    MediaPerfProfiler                       *pPerfProfiler = nullptr;
     MOS_CONTEXT                             *pOsContext = nullptr;
     PMHW_MI_MMIOREGISTERS                   pMmioRegisters = nullptr;
 
@@ -1062,6 +1062,7 @@ MOS_STATUS VpVeboxCmdPacket::RenderVeboxCmd(
     VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_veboxInterface);
     VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_osInterface->pOsContext);
     VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_mhwMiInterface->GetMmioRegisters());
+    VP_RENDER_CHK_NULL_RETURN(pRenderData);
 
     pRenderHal              = m_hwInterface->m_renderHal;
     pMhwMiInterface         = m_hwInterface->m_mhwMiInterface;
@@ -1103,6 +1104,14 @@ MOS_STATUS VpVeboxCmdPacket::RenderVeboxCmd(
         bDiVarianceEnable,
         &VeboxSurfaceStateCmdParams);
 
+    // Add compressible info of input/output surface to log
+    if (this->m_currentSurface && VeboxSurfaceStateCmdParams.pSurfOutput)
+    {
+        std::string info = "in_comps = " + std::to_string(int(this->m_currentSurface->osSurface->bCompressible)) + ", out_comps = " + std::to_string(int(VeboxSurfaceStateCmdParams.pSurfOutput->osSurface->bCompressible));
+        const char* ocaLog = info.c_str();
+        HalOcaInterface::TraceMessage(*CmdBuffer, *pOsContext, ocaLog, info.size());
+    }
+
     SetupVeboxState(
         bDiVarianceEnable,
         &VeboxStateCmdParams);
@@ -1113,7 +1122,8 @@ MOS_STATUS VpVeboxCmdPacket::RenderVeboxCmd(
 
     VP_RENDER_CHK_STATUS_RETURN(IsCmdParamsValid(
         VeboxStateCmdParams,
-        VeboxDiIecpCmdParams));
+        VeboxDiIecpCmdParams,
+        VeboxSurfaceStateCmdParams));
 
     //---------------------------------
     // Initialize Vebox Surface State Params
@@ -1144,12 +1154,10 @@ MOS_STATUS VpVeboxCmdPacket::RenderVeboxCmd(
 
         VP_RENDER_CHK_NULL_RETURN(m_sfcRender);
 
-        VP_RENDER_CHK_STATUS_RETURN(m_sfcRender->SetupSfcState(
-            &m_sfcRenderData,
-            m_renderTarget));
+        VP_RENDER_CHK_STATUS_RETURN(m_sfcRender->SetupSfcState(m_renderTarget));
 
         VP_RENDER_CHK_STATUS_RETURN(m_sfcRender->SendSfcCmd(
-                                pRenderData,
+                                (pRenderData->DI.bDeinterlace || pRenderData->DN.bDnEnabled),
                                 CmdBuffer));
     }
 
@@ -1272,7 +1280,7 @@ MOS_STATUS VpVeboxCmdPacket::SendVecsStatusTag(
     PMOS_INTERFACE                      pOsInterface,
     PMOS_COMMAND_BUFFER                 pCmdBuffer)
 {
-    MOS_RESOURCE                        GpuStatusBuffer;
+    PMOS_RESOURCE                       gpuStatusBuffer = nullptr;
     MHW_MI_FLUSH_DW_PARAMS              FlushDwParams;
     MOS_STATUS                          eStatus = MOS_STATUS_SUCCESS;
 
@@ -1282,17 +1290,18 @@ MOS_STATUS VpVeboxCmdPacket::SendVecsStatusTag(
     VP_RENDER_CHK_NULL_RETURN(pCmdBuffer);
 
     // Get GPU Status buffer
-    pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, &GpuStatusBuffer);
+    pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, gpuStatusBuffer);
+    VP_RENDER_CHK_NULL_RETURN(gpuStatusBuffer);
 
     // Register the buffer
     VP_RENDER_CHK_STATUS_RETURN(pOsInterface->pfnRegisterResource(
                                   pOsInterface,
-                                  &GpuStatusBuffer,
+                                  gpuStatusBuffer,
                                   true,
                                   true));
 
     MOS_ZeroMemory(&FlushDwParams, sizeof(FlushDwParams));
-    FlushDwParams.pOsResource       = &GpuStatusBuffer;
+    FlushDwParams.pOsResource       = gpuStatusBuffer;
     FlushDwParams.dwResourceOffset  = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, MOS_GPU_CONTEXT_VEBOX);
     FlushDwParams.dwDataDW1         = pOsInterface->pfnGetGpuStatusTag(pOsInterface, MOS_GPU_CONTEXT_VEBOX);
     VP_RENDER_CHK_STATUS_RETURN(pMhwMiInterface->AddMiFlushDwCmd(
@@ -1316,23 +1325,29 @@ bool VpVeboxCmdPacket::RndrCommonIsMiBBEndNeeded(
     return needed;
 }
 
+MOS_STATUS VpVeboxCmdPacket::InitSfcRender()
+{
+    if (nullptr == m_sfcRender)
+    {
+        VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
+        VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_vpPlatformInterface);
+        VP_RENDER_CHK_STATUS_RETURN(m_hwInterface->m_vpPlatformInterface->CreateSfcRender(
+            m_sfcRender,
+            *m_hwInterface,
+            m_allocator));
+        VP_RENDER_CHK_NULL_RETURN(m_sfcRender);
+    }
+    VP_PUBLIC_CHK_STATUS_RETURN(m_sfcRender->Init());
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS VpVeboxCmdPacket::Init()
 {
     MOS_STATUS    eStatus = MOS_STATUS_SUCCESS;
     VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
     VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_skuTable);
 
-    if (m_sfcRender == nullptr)
-    {
-        m_sfcRender = MOS_New(SfcRenderM12,
-            m_hwInterface->m_osInterface,
-            m_hwInterface->m_sfcInterface,
-            m_allocator);
-        VP_CHK_SPACE_NULL_RETURN(m_sfcRender);
-
-    }
-
-    VP_RENDER_CHK_STATUS_RETURN(InitSfcStateParams());
+    VP_RENDER_CHK_STATUS_RETURN(InitSfcRender());
 
     if (nullptr == m_currentSurface)
     {
@@ -1384,6 +1399,7 @@ MOS_STATUS VpVeboxCmdPacket::PacketInit(
     VP_RENDER_CHK_NULL_RETURN(pRenderData);
     VP_RENDER_CHK_NULL_RETURN(inputSurface);
     VP_RENDER_CHK_NULL_RETURN(outputSurface);
+    VP_RENDER_CHK_STATUS_RETURN(pRenderData->Init());
 
     m_PacketCaps      = packetCaps;
 
@@ -1400,13 +1416,9 @@ MOS_STATUS VpVeboxCmdPacket::PacketInit(
         m_IsSfcUsed = true;
     }
 
-    // To be removed after vphal surface being cleaned.
-    // Ensure the input is ready to be read
-    // Currently, mos RegisterResourcere cannot sync the 3d resource.
-    // Temporaly, call sync resource to do the sync explicitly.
-    m_allocator->SyncOnResource(
-        &inputSurface->osSurface->OsResource,
-        false);
+    //update VEBOX resource GMM resource usage type
+    m_allocator->UpdateResourceUsageType(&inputSurface->osSurface->OsResource, MOS_HW_RESOURCE_USAGE_VP_INPUT_PICTURE_FF);
+    m_allocator->UpdateResourceUsageType(&outputSurface->osSurface->OsResource, MOS_HW_RESOURCE_USAGE_VP_OUTPUT_PICTURE_FF);
 
     // Set current src = current primary input
     VP_PUBLIC_CHK_STATUS_RETURN(m_allocator->CopyVpSurface(*m_currentSurface ,*inputSurface));
@@ -1450,6 +1462,17 @@ MOS_STATUS VpVeboxCmdPacket::Submit(MOS_COMMAND_BUFFER* commandBuffer, uint8_t p
     VpVeboxRenderData   *pRenderData = GetLastExecRenderData();
     VP_FUNC_CALL();
 
+    if (m_currentSurface && m_currentSurface->osSurface)
+    {
+        // Ensure the input is ready to be read
+        // Currently, mos RegisterResourcere cannot sync the 3d resource.
+        // Temporaly, call sync resource to do the sync explicitly.
+        // Sync need be done after switching context.
+        m_allocator->SyncOnResource(
+            &m_currentSurface->osSurface->OsResource,
+            false);
+    }
+
     // Setup, Copy and Update VEBOX State
     VP_RENDER_CHK_STATUS_RETURN(CopyAndUpdateVeboxState());
 
@@ -1476,18 +1499,14 @@ VpVeboxCmdPacket::VpVeboxCmdPacket(
     PVP_MHWINTERFACE hwInterface,
     PVpAllocator &allocator,
     VPMediaMemComp *mmc):
-    VpCmdPacket(task, hwInterface, allocator, mmc, VP_PIPELINE_PACKET_FF)
+    CmdPacket(task),
+    VpCmdPacket(task, hwInterface, allocator, mmc, VP_PIPELINE_PACKET_VEBOX)
 {
 
 }
 
 VpVeboxCmdPacket:: ~VpVeboxCmdPacket()
 {
-    if (m_sfcRenderData.sfcStateParams)
-    {
-        MOS_FreeMemAndSetNull(m_sfcRenderData.sfcStateParams);
-    }
-
     MOS_Delete(m_sfcRender);
     MOS_Delete(m_lastExecRenderData);
     MOS_Delete(m_surfMemCacheCtl);
@@ -1680,6 +1699,9 @@ MOS_STATUS VpVeboxCmdPacket::SetupIndirectStates()
     // Set DNDI State
     VP_RENDER_CHK_STATUS_RETURN(AddVeboxDndiState());
 
+    // Set GAMUT State
+    VP_RENDER_CHK_STATUS_RETURN(AddVeboxGamutState());
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -1719,8 +1741,9 @@ void VpVeboxCmdPacket::VeboxGetBeCSCMatrix(
 }
 
 MOS_STATUS VpVeboxCmdPacket::IsCmdParamsValid(
-    const MHW_VEBOX_STATE_CMD_PARAMS        &VeboxStateCmdParams,
-    const MHW_VEBOX_DI_IECP_CMD_PARAMS      &VeboxDiIecpCmdParams)
+    const MHW_VEBOX_STATE_CMD_PARAMS            &VeboxStateCmdParams,
+    const MHW_VEBOX_DI_IECP_CMD_PARAMS          &VeboxDiIecpCmdParams,
+    const VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS  &VeboxSurfaceStateCmdParams)
 {
     const MHW_VEBOX_MODE    &veboxMode          = VeboxStateCmdParams.VeboxMode;
 
@@ -1738,6 +1761,13 @@ MOS_STATUS VpVeboxCmdPacket::IsCmdParamsValid(
         }
     }
 
+    if (m_PacketCaps.bDN && !m_PacketCaps.bDI && !m_PacketCaps.bQueryVariance && !m_PacketCaps.bIECP)
+    {
+        if (VeboxSurfaceStateCmdParams.pSurfInput->osSurface->dwPitch != VeboxSurfaceStateCmdParams.pSurfDNOutput->osSurface->dwPitch)
+        {
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
+    }
     return MOS_STATUS_SUCCESS;
 }
 
@@ -2147,6 +2177,73 @@ MOS_STATUS VpVeboxCmdPacket::InitSurfMemCacheControl(VP_EXECUTE_CAPS packetCaps)
     }
 
     return MOS_STATUS_SUCCESS;
+}
+
+MHW_CSPACE VpVeboxCmdPacket::VpHalCspace2MhwCspace(VPHAL_CSPACE cspace)
+{
+    switch (cspace)
+    {
+        case CSpace_Source:
+            return MHW_CSpace_Source;
+
+        case CSpace_RGB:
+            return MHW_CSpace_RGB;
+
+        case CSpace_YUV:
+            return MHW_CSpace_YUV;
+
+        case CSpace_Gray:
+            return MHW_CSpace_Gray;
+
+        case CSpace_Any:
+            return MHW_CSpace_Any;
+
+        case CSpace_sRGB:
+            return MHW_CSpace_sRGB;
+
+        case CSpace_stRGB:
+            return MHW_CSpace_stRGB;
+
+        case CSpace_BT601:
+            return MHW_CSpace_BT601;
+
+        case CSpace_BT601_FullRange:
+            return MHW_CSpace_BT601_FullRange;
+
+        case CSpace_BT709:
+            return MHW_CSpace_BT709;
+
+        case CSpace_BT709_FullRange:
+            return MHW_CSpace_BT709_FullRange;
+
+        case CSpace_xvYCC601:
+            return MHW_CSpace_xvYCC601;
+
+        case CSpace_xvYCC709:
+            return MHW_CSpace_xvYCC709;
+
+        case CSpace_BT601Gray:
+            return MHW_CSpace_BT601Gray;
+
+        case CSpace_BT601Gray_FullRange:
+            return MHW_CSpace_BT601Gray_FullRange;
+
+        case CSpace_BT2020:
+            return MHW_CSpace_BT2020;
+
+        case CSpace_BT2020_RGB:
+            return MHW_CSpace_BT2020_RGB;
+
+        case CSpace_BT2020_FullRange:
+            return MHW_CSpace_BT2020_FullRange;
+
+        case CSpace_BT2020_stRGB:
+            return MHW_CSpace_BT2020_stRGB;
+
+        case CSpace_None:
+        default:
+            return MHW_CSpace_None;
+    }
 }
 
 }

@@ -766,10 +766,11 @@ MOS_STATUS MediaMemDecompState::WriteSyncTagToResourceCmd(
 
     MHW_FUNCTION_ENTER;
 
-    MOS_RESOURCE globalGpuContextSyncTagBuffer;
+    PMOS_RESOURCE globalGpuContextSyncTagBuffer = nullptr;
     MHW_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
         m_osInterface,
-        &globalGpuContextSyncTagBuffer));
+        globalGpuContextSyncTagBuffer));
+    MHW_CHK_NULL_RETURN(globalGpuContextSyncTagBuffer);
 
     uint32_t offset = m_osInterface->pfnGetGpuStatusTagOffset(
         m_osInterface,
@@ -779,7 +780,7 @@ MOS_STATUS MediaMemDecompState::WriteSyncTagToResourceCmd(
         m_osInterface->CurrentGpuContextOrdinal);
 
     MHW_MI_STORE_DATA_PARAMS params;
-    params.pOsResource      = &globalGpuContextSyncTagBuffer;
+    params.pOsResource      = globalGpuContextSyncTagBuffer;
     params.dwResourceOffset = offset;
     params.dwValue          = value;
 
@@ -944,14 +945,16 @@ MOS_STATUS MediaMemDecompState::Initialize(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_NULL_HW_ACCELERATION_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     nullHWAccelerationEnable.Value = userFeatureData.u32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DECODE_LOCK_DISABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_disableDecodeSyncLock = userFeatureData.u32Data ? true : false;
 #endif  // _DEBUG || _RELEASE_INTERNAL
 

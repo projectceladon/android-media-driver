@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2017, Intel Corporation
+* Copyright (c) 2014-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -29,6 +29,12 @@
 
 #include "mhw_state_heap_generic.h"
 #include "mhw_state_heap_hwcmd_g10_X.h"
+
+// Each increment in sampler index represents this increment in offset
+#define MHW_SAMPLER_STATE_AVS_INC_G10       2048
+#define MHW_SAMPLER_STATE_CONV_INC_G10      2048
+#define MHW_SAMPLER_WIDTH_ALIGN_UNIT_G10    2
+#define MHW_SAMPLER_HEIGHT_ALIGN_UNIT_G10   4
 
 struct MHW_STATE_HEAP_INTERFACE_G10_X : public MHW_STATE_HEAP_INTERFACE_GENERIC<mhw_state_heap_g10_X>
 {
@@ -76,6 +82,10 @@ public:
         PMHW_SAMPLER_AVS_TABLE_PARAM pMhwSamplerAvsTableParam);
 
     MOS_STATUS InitHwSizes();
+
+    MOS_STATUS SetInterfaceDescriptor(
+        uint32_t                         dwNumIdsToSet,
+        PMHW_INTERFACE_DESCRIPTOR_PARAMS pParams);
 
 };
 

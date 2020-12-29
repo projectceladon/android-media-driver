@@ -164,6 +164,13 @@ typedef enum _MULTI_ENGINE_MODE
     MHW_VDBOX_HCP_MULTI_ENGINE_MODE_MIDDLE        = 3,
 }MHW_VDBOX_HCP_MULTI_ENGINE_MODE;
 
+typedef enum
+{
+    MHW_VDBOX_HCP_RT_FIRST_PHASE    = 0, //!< First phase
+    MHW_VDBOX_HCP_RT_MIDDLE_PHASE   = 1, //!< Middle phase
+    MHW_VDBOX_HCP_RT_LAST_PHASE     = 2  //!< Last phase
+} MHW_HCP_RT_PHASE_INDICATOR;
+
 typedef enum _VDENC_PIPE_NUM_OF_PIPE
 {
     VDENC_PIPE_SINGLE_PIPE          = 0,
@@ -202,17 +209,6 @@ enum ROWSTORE_SCRATCH_BUFFER_CACHE
 {
     BUFFER_TO_LLC                  = 0x0,
     BUFFER_TO_INTERNALMEDIASTORAGE = 0x1
-};
-
-//!
-//! \enum     SLICE_THRESHOLD_TABLE_MODE
-//! \brief    Slice thershold table mode, dynamic slice tuning params
-//!
-enum SLICE_THRESHOLD_TABLE_MODE
-{
-    NO_SLICE_THRESHOLD_TABLE = 0,
-    USE_SLICE_THRESHOLD_TABLE_100_PERCENT = 1,
-    USE_SLICE_THRESHOLD_TABLE_90_PERCENT = 2
 };
 
 struct MHW_VDBOX_PIPE_MODE_SELECT_PARAMS
@@ -425,9 +421,9 @@ struct MHW_VDBOX_AVC_IMG_PARAMS
     bool                                    bSliceSizeStreamOutEnabled = false;
     bool                                    bCrePrefetchEnable = false;
     bool                                    bPerMBStreamOut = false;
+    bool                                    bRollingIRestrictFracCand = false;
 
     uint32_t                                dwMbSlcThresholdValue = 0;  // For VDENC dynamic slice size control
-    uint32_t                                dwSliceThresholdTable = 0;
     uint32_t                                dwVdencSliceMinusBytes = 0;
     uint8_t                                *pVDEncModeCost = nullptr;
     uint8_t                                *pVDEncMvCost = nullptr;

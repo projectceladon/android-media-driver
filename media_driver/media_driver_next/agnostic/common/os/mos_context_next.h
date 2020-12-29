@@ -31,6 +31,7 @@
 #include "mos_cmdbufmgr_next.h" 
 #include "mos_gpucontextmgr_next.h"
 #include "mos_decompression.h"
+#include "mos_mediacopy.h"
 
 class OsContextNext
 {
@@ -50,7 +51,7 @@ public:
     //! \brief  Initialzie the OS ContextNext Object
     //! \return MOS_STATUS_SUCCESS on success case, MOS error status on fail cases
     //!
-    virtual MOS_STATUS Init(DDI_DEVICE_CONTEXT osDriverContextNext);
+    virtual MOS_STATUS Init(DDI_DEVICE_CONTEXT osDriverContextNext) = 0;
 
 private:
     //!
@@ -114,14 +115,6 @@ public:
     bool GetOsContextValid() { return m_osContextValid; };
 
     //!
-    //! \brief  Set slice count to shared memory and KMD
-    //! \param  [in,out] pSliceCount
-    //!         pointer to the slice count. Input the slice count for current
-    //!         contextNext, output the ruling slice count shared by all contextNexts.
-    //!
-    virtual void SetSliceCount(uint32_t *pSliceCount) { MOS_UNUSED(pSliceCount); };
-
-    //!
     //! \brief  Get GPU context manager of the device
     //! \return GPU context manager
     //!
@@ -147,6 +140,16 @@ public:
     {
         return m_mosDecompression;
     }
+
+    //!
+    //! \brief  Get MosMediaCopy
+    //! \return ptr to MosMediaCopy
+    //!
+    MosMediaCopy *GetMosMediaCopy()
+    {
+        return m_mosMediaCopy;
+    }
+
     //! \brief  Get the DumpFrameNum
     //! \return The current dumped frameNum
     //!
@@ -226,21 +229,6 @@ protected:
     //! \brief  need KMD to track the media frame or not
     bool                            m_enableKmdMediaFrameTracking = false;
 
-    //! \brief  need KMD to assist the command buffer parsing
-    bool                            m_noParsingAssistanceInKmd = false;
-
-    //! \brief  how many bytes of the Nal Unit need be included
-    uint32_t                        m_numNalUnitBytesIncluded = 0;
-
-    //! \brief   For GPU Reset Statistics, rest counter
-    uint32_t                        m_gpuResetCount = 0;
-
-    //! \brief   For GPU Reset Statistics, the active batch
-    uint32_t                        m_gpuActiveBatch = 0;
-
-    //! \brief   For GPU Reset Statistics, the pending batch
-    uint32_t                        m_gpuPendingBatch = 0;
-
     //! \brief   For Resource addressing, whether patch list mode is active
     bool                            m_usesPatchList = false;
 
@@ -250,16 +238,19 @@ protected:
     //! \brief   For limited GPU VA resource can not be mapped during creation
     bool                            m_mapOnCreate = false;
 
-    //! \brief  check whether use inline codec status update or seperate BB
-    bool                            m_inlineCodecStatusUpdate = false;
-
     //! \brief   Component info
     MOS_COMPONENT                   m_component = COMPONENT_UNKNOWN;
 
     //! \brief   Flag to indicate if implicit Tile is needed
     bool                            m_implicitTileNeeded = false;
 
+    //! \brief   Flag to indicate if NoGfxMemory is needed
+    bool                            m_noGfxMemoryNeeded = false;
+
     //! \brief  the ptr to mos decompression module
-    MosDecompression *m_mosDecompression = nullptr;
+    MosDecompression                *m_mosDecompression = nullptr;
+
+    //! \brief the ptr to mos media copy module
+    MosMediaCopy                    *m_mosMediaCopy = nullptr;
 };
 #endif // #ifndef __MOS_CONTEXTNext_NEXT_H__

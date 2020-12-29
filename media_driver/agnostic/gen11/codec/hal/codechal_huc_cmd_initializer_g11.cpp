@@ -436,8 +436,8 @@ MOS_STATUS CodechalCmdInitializerG11::CmdInitializerVp9SetDmem()
     hucInputCmd1.SADQPLambda = (uint16_t)(lambda * 4 + 0.5);
     hucInputCmd1.RDQPLambda = (uint16_t)(lambda * lambda * 4 + 0.5); //U14.2
 
-    hucInputCmd1.SrcFrameHeightMinus1 = m_vp9Params.picParams->SrcFrameHeightMinus1;
-    hucInputCmd1.SrcFrameWidthMinus1 = m_vp9Params.picParams->SrcFrameWidthMinus1;
+    hucInputCmd1.SrcFrameHeight = m_vp9Params.picParams->SrcFrameHeightMinus1 + 1;
+    hucInputCmd1.SrcFrameWidth = m_vp9Params.picParams->SrcFrameWidthMinus1 + 1;
     hucInputCmd1.SegmentationEnabled = m_vp9Params.segmentationEnabled;
     hucInputCmd1.PrevFrameSegEnabled = m_vp9Params.prevFrameSegEnabled;
     hucInputCmd1.LumaACQIndex = m_vp9Params.picParams->LumaACQIndex;
@@ -571,7 +571,8 @@ MOS_STATUS CodechalCmdInitializerG11::CmdInitializerAllocateResources(CodechalHw
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_VQI_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_hevcVisualQualityImprovement = userFeatureData.i32Data ? true : false;
 
     return eStatus;

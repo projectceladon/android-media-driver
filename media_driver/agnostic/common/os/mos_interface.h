@@ -94,10 +94,13 @@ public:
     //! \details  Must be last called MOS interface after DestroyOsDeviceContext
     //! \details  Caller: DDI only.
     //!
+    //! \param    [in] mosCtx
+    //!           Pointer of device context in DDI for reg ops
+    //!
     //! \return   MOS_STATUS
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
-    static MOS_STATUS CloseOsUtilities();
+    static MOS_STATUS CloseOsUtilities(PMOS_CONTEXT mosCtx);
 
     //!
     //! \brief    Create Os Device Context
@@ -242,7 +245,23 @@ public:
     //!           Read-only GT system info got, nullptr if failed to get
     //!
     static MEDIA_SYSTEM_INFO *GetGtSystemInfo(MOS_STREAM_HANDLE streamState);
-    
+
+    //!
+    //! \brief    Get Media Engine Info
+    //! \details  [System info Interface] Get Media Engine Info
+    //! \details  Caller: HAL & MHW
+    //! \details  This func is called to differentiate the behavior according to Media Engine Info.
+    //!
+    //! \param    [in] streamState
+    //!           Handle of Os Stream State
+    //! \param    [in] info
+    //!           MEDIA_SYS_INFO
+    //!
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    static MOS_STATUS GetMediaEngineInfo(MOS_STREAM_HANDLE streamState, MEDIA_ENGINE_INFO &info);
+
     //!
     //! \brief    Get Adapter Info
     //! \details  [System info Interface] Get Adapter Info
@@ -661,7 +680,22 @@ public:
     //!
     static MOS_CMD_BUF_ATTRI_VE *GetAttributeVeBuffer(
         COMMAND_BUFFER_HANDLE cmdBuffer);
-        
+
+    //!
+    //! \brief    Get Cache Policy Memory Object
+    //! \details  [Resource Interface] Get Cache Policy Memory Object in GMM corresponding to the resource usage
+    //!           Caller: HAL & MHW
+    //!
+    //! \param    [in] mosUsage
+    //!           Resource usage as index to the memory object table
+    //!           If prociding unknown usage, default state will be returned
+    //!
+    //! \return   MEMORY_OBJECT_CONTROL_STATE
+    //!           The cache policy memory object got from MOS interface
+    //!
+    static GMM_RESOURCE_USAGE_TYPE GetGmmResourceUsageType(
+        MOS_HW_RESOURCE_DEF mosUsage);
+
     //!
     //! \brief    Get Cache Policy Memory Object
     //! \details  [Resource Interface] Get Cache Policy Memory Object in GMM corresponding to the resource usage
@@ -885,6 +919,20 @@ public:
     static MOS_STATUS UnlockMosResource(
         MOS_STREAM_HANDLE streamState,
         MOS_RESOURCE_HANDLE resource);
+
+    //!
+    //! \brief    Update resource usage type
+    //! \details  update the resource usage for cache policy
+    //! \param    PMOS_RESOURCE pOsResource
+    //!           [in/out] Pointer to OS Resource
+    //! \param    MOS_HW_RESOURCE_DEF resUsageType
+    //!           [in] MOS resosuce usage type
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    static MOS_STATUS UpdateResourceUsageType(
+        PMOS_RESOURCE           pOsResource,
+        MOS_HW_RESOURCE_DEF     resUsageType);
 
     //!
     //! \brief    Register Resource
@@ -1275,6 +1323,25 @@ public:
         uint32_t            copyOutputOffset,
         bool                outputCompressed);
 
+    //!
+    //! \brief    copy resource
+    //!
+    //! \param    [in] streamState
+    //!           Handle of Os Stream State
+    //! \param    [in] inputResource
+    //!           Input resource to copy.
+    //! \param    [out] outputResource
+    //!           Output resource.
+    //! \param    [in] preferMethod
+    //!           Insdicate which copy mode is perfered.
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    static MOS_STATUS MediaCopy(
+        MOS_STREAM_HANDLE   streamState,
+        MOS_RESOURCE_HANDLE inputResource,
+        MOS_RESOURCE_HANDLE outputResource,
+        uint32_t            preferMethod);
     // GPU Status interfaces
 
     //!
@@ -1338,7 +1405,7 @@ public:
 
     static MOS_STATUS GetGpuStatusBufferResource(
         MOS_STREAM_HANDLE streamState,
-        MOS_RESOURCE_HANDLE resource,
+        MOS_RESOURCE_HANDLE &resource,
         GPU_CONTEXT_HANDLE gpuContext);
     
     //!
@@ -1641,7 +1708,29 @@ public:
     static void IncPerfBufferID(
         MOS_STREAM_HANDLE streamState);
 
+    //!
+    //! \brief    Determines if the GPU Hung
+    //! \param    [in] streamState
+    //!           Handle of Os Stream State
+    //! \return   int32_t
+    //!           Return if the GPU Hung
+    //!
+    static int32_t IsGPUHung(
+        MOS_STREAM_HANDLE streamState);
+
 private:
+    //!
+    //! \brief    Init per stream parameters
+    //! \details  Init per stream parameters
+    //!
+    //! \param    [in] streamState
+    //!           Handle of Os Stream State
+    //!
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    static MOS_STATUS InitStreamParameters(
+        MOS_STREAM_HANDLE  streamState);
 
     //!
     //! \brief    Compose Cmd buffer header

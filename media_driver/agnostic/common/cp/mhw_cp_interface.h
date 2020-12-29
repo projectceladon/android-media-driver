@@ -99,7 +99,7 @@ public:
         return MOS_STATUS_SUCCESS;
     }
 
-    virtual bool IsHWCounterAutoIncrementEnforced(
+    virtual bool IsHwCounterIncrement(
         PMOS_INTERFACE osInterface)
     {
         MOS_UNUSED(osInterface);
@@ -235,6 +235,21 @@ public:
     }
 
     virtual MOS_STATUS SetMfxProtectionState(
+        bool                      isDecodeInUse,
+        PMOS_COMMAND_BUFFER       cmdBuffer,
+        PMHW_BATCH_BUFFER         batchBuffer,
+        PMHW_CP_SLICE_INFO_PARAMS sliceInfoParam)
+    {
+        MOS_UNUSED(isDecodeInUse);
+        MOS_UNUSED(cmdBuffer);
+        MOS_UNUSED(batchBuffer);
+        MOS_UNUSED(sliceInfoParam);
+
+        MhwStubMessage();
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual MOS_STATUS SetHcpProtectionState(
         bool                      isDecodeInUse,
         PMOS_COMMAND_BUFFER       cmdBuffer,
         PMHW_BATCH_BUFFER         batchBuffer,

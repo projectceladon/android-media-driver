@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015-2019, Intel Corporation
+* Copyright (c) 2015-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -368,6 +368,21 @@ MOS_STATUS MhwSfcInterfaceG12::AddSfcState(
             &ResourceParams));
     }
 
+    if (pSfcStateParamsG12->resIefLineTileBuffer && !Mos_ResourceIsNull(pSfcStateParamsG12->resIefLineTileBuffer))
+    {
+        MOS_ZeroMemory(&ResourceParams, sizeof(ResourceParams));
+        ResourceParams.presResource = pSfcStateParamsG12->resIefLineTileBuffer;
+        ResourceParams.pdwCmd = &(cmd.DW41.Value);
+        ResourceParams.dwLocationInCmd = 41;
+        ResourceParams.HwCommandType = MOS_SFC_STATE;
+        ResourceParams.bIsWritable = true;
+
+        MHW_CHK_STATUS_RETURN(pfnAddResourceToCmd(
+            pOsInterface,
+            pCmdBuffer,
+            &ResourceParams));
+    }
+
     if (pSfcStateParamsG12->resSfdLineTileBuffer && !Mos_ResourceIsNull(pSfcStateParamsG12->resSfdLineTileBuffer))
     {
         MOS_ZeroMemory(&ResourceParams, sizeof(ResourceParams));
@@ -575,60 +590,74 @@ MOS_STATUS MhwSfcInterfaceG12 :: SetSfcSamplerTable(
 
         pAvsParams->fScaleX = fScaleX;
 
-        // For 1x scaling in horizontal direction and not force polyphase coefs, use special coefficients for filtering
-        if (fScaleX == 1.0F && !pAvsParams->bForcePolyPhaseCoefs)
+        if (m_scalingMode == MHW_SCALING_NEAREST)
         {
             MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
                 piYCoefsX,
                 Plane,
                 true));
+            MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                piUVCoefsX,
+                MHW_U_PLANE,
+                true));
+        }
+        else
+        {
+            // For 1x scaling in horizontal direction and not force polyphase coefs, use special coefficients for filtering
+            if ((fScaleX == 1.0F && !pAvsParams->bForcePolyPhaseCoefs))
+            {
+                MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                    piYCoefsX,
+                    Plane,
+                    true));
+
+                // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
+                // So, coefficient for UV/RB channels caculation can be passed
+                if ((!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter)))
+                {
+                    MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                        piUVCoefsX,
+                        MHW_U_PLANE,
+                        true));
+                }
+            }
+            else
+            {
+                // Clamp the Scaling Factor if > 1.0x
+                fScaleX = MOS_MIN(1.0F, fScaleX);
+
+                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesY(
+                    piYCoefsX,
+                    fScaleX,
+                    Plane,
+                    SrcFormat,
+                    fHPStrength,
+                    bUse8x8Filter,
+                    NUM_HW_POLYPHASE_TABLES,
+                    0));
+            }
 
             // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
             // So, coefficient for UV/RB channels caculation can be passed
             if (!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter))
             {
-                MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
-                    piUVCoefsX,
-                    MHW_U_PLANE,
-                    true));
-            }
-        }
-        else
-        {
-            // Clamp the Scaling Factor if > 1.0x
-            fScaleX = MOS_MIN(1.0F, fScaleX);
-
-            MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesY(
-                piYCoefsX,
-                fScaleX,
-                Plane,
-                SrcFormat,
-                fHPStrength,
-                bUse8x8Filter,
-                NUM_HW_POLYPHASE_TABLES,
-                0));
-        }
-
-        // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
-        // So, coefficient for UV/RB channels caculation can be passed
-        if (!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter))
-        {
-            // If Chroma Siting info is present
-            if (dwChromaSiting & MHW_CHROMA_SITING_HORZ_LEFT)
-            {
-                // No Chroma Siting
-                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
-                    piUVCoefsX,
-                    2.0F,
-                    fScaleX));
-            }
-            else
-            {
-                // Chroma siting offset will be add in the HW cmd
-                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
-                    piUVCoefsX,
-                    3.0F,
-                    fScaleX));
+                // If Chroma Siting info is present
+                if (dwChromaSiting & MHW_CHROMA_SITING_HORZ_LEFT)
+                {
+                    // No Chroma Siting
+                    MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
+                        piUVCoefsX,
+                        2.0F,
+                        fScaleX));
+                }
+                else
+                {
+                    // Chroma siting offset will be add in the HW cmd
+                    MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
+                        piUVCoefsX,
+                        3.0F,
+                        fScaleX));
+                }
             }
         }
     }
@@ -644,59 +673,73 @@ MOS_STATUS MhwSfcInterfaceG12 :: SetSfcSamplerTable(
 
         pAvsParams->fScaleY = fScaleY;
 
-        // For 1x scaling in vertical direction and not force polyphase coefs, use special coefficients for filtering
-        if (fScaleY == 1.0F && !pAvsParams->bForcePolyPhaseCoefs)
+        if (m_scalingMode == MHW_SCALING_NEAREST)
         {
             MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
                 piYCoefsY,
                 Plane,
                 true));
+            MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                piUVCoefsY,
+                MHW_U_PLANE,
+                true));
+        }
+        else
+        {
+            // For 1x scaling in vertical direction and not force polyphase coefs, use special coefficients for filtering
+            if ((fScaleY == 1.0F && !pAvsParams->bForcePolyPhaseCoefs))
+            {
+                MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                    piYCoefsY,
+                    Plane,
+                    true));
+
+                // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
+                // So, coefficient for UV/RB channels caculation can be passed
+                if ((!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter)))
+                {
+                    MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
+                        piUVCoefsY,
+                        MHW_U_PLANE,
+                        true));
+                }
+            }
+            else
+            {
+                // Clamp the Scaling Factor if > 1.0x
+                fScaleY = MOS_MIN(1.0F, fScaleY);
+
+                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesY(
+                    piYCoefsY,
+                    fScaleY,
+                    Plane,
+                    SrcFormat,
+                    fHPStrength,
+                    bUse8x8Filter,
+                    NUM_HW_POLYPHASE_TABLES, 0));
+            }
 
             // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
             // So, coefficient for UV/RB channels caculation can be passed
             if (!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter))
             {
-                MHW_CHK_STATUS_RETURN(Mhw_SetNearestModeTable(
-                    piUVCoefsY,
-                    MHW_U_PLANE,
-                    true));
-            }
-        }
-        else
-        {
-            // Clamp the Scaling Factor if > 1.0x
-            fScaleY = MOS_MIN(1.0F, fScaleY);
-
-            MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesY(
-                piYCoefsY,
-                fScaleY,
-                Plane,
-                SrcFormat,
-                fHPStrength,
-                bUse8x8Filter,
-                NUM_HW_POLYPHASE_TABLES,0));
-        }
-
-        // The 8-tap adaptive is enabled for all channel if RGB format input, then UV/RB use the same coefficient as Y/G
-        // So, coefficient for UV/RB channels caculation can be passed
-        if (!(IS_RGB32_FORMAT(SrcFormat) && bUse8x8Filter))
-        {
-            // If Chroma Siting info is present
-            if (dwChromaSiting & MHW_CHROMA_SITING_VERT_TOP)
-            {
-                // No Chroma Siting
-                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
-                    piUVCoefsY,
-                    2.0F,
-                    fScaleY));
-            }
-            else
-            {
-                // Chroma siting offset will be add in the HW cmd
-                MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
-                    piUVCoefsY,
-                    3.0F,
-                    fScaleY));
+                // If Chroma Siting info is present
+                if (dwChromaSiting & MHW_CHROMA_SITING_VERT_TOP)
+                {
+                    // No Chroma Siting
+                    MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
+                        piUVCoefsY,
+                        2.0F,
+                        fScaleY));
+                }
+                else
+                {
+                    // Chroma siting offset will be add in the HW cmd
+                    MHW_CHK_STATUS_RETURN(Mhw_CalcPolyphaseTablesUV(
+                        piUVCoefsY,
+                        3.0F,
+                        fScaleY));
+                }
             }
         }
     }

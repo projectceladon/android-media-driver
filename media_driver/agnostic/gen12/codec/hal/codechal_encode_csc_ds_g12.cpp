@@ -135,25 +135,26 @@ MOS_STATUS CodechalEncodeCscDsG12::CheckRawColorFormat(MOS_FORMAT format, MOS_TI
         m_cscRequireConvTo8bPlanar = 1;
         break;
     case Format_AYUV:
-        if(m_encoder->m_vdencEnabled)
+        if (m_encoder->m_vdencEnabled)
         {
             m_colorRawSurface = cscColorAYUV;
+            m_cscRequireColor = 1;
             break;
         }
     case Format_R10G10B10A2:
-        if(m_encoder->m_vdencEnabled)
+        if (m_encoder->m_vdencEnabled)
         {
             m_colorRawSurface = cscColorARGB10;
             break;
         }
     case Format_B10G10R10A2:
-        if(m_encoder->m_vdencEnabled)
+        if (m_encoder->m_vdencEnabled)
         {
             m_colorRawSurface = cscColorABGR10;
             break;
         }
     case Format_Y410:
-        if(m_encoder->m_vdencEnabled)
+        if (m_encoder->m_vdencEnabled)
         {
             m_colorRawSurface = cscColorY410;
             break;
@@ -387,13 +388,6 @@ MOS_STATUS CodechalEncodeCscDsG12::SetCurbeCsc()
     curbe.DW2_OriginalPicWidthInSamples = m_curbeParams.dwInputPictureWidth;
     curbe.DW2_OriginalPicHeightInSamples = m_curbeParams.dwInputPictureHeight;
 
-    // when the input surface is NV12 tiled format and not aligned with 4 bytes,
-    // need kernel to do the padding copy with force to linear format, it's
-    // transparent to kernel and hw can handle it
-    if (m_colorRawSurface == cscColorNv12TileY && m_cscFlag == 1)
-        curbe.DW1_PictureFormat = cscColorNv12Linear;
-
-
     // RGB->YUV CSC coefficients
     if (m_curbeParams.inputColorSpace == ECOLORSPACE_P709)
     {
@@ -513,17 +507,13 @@ MOS_STATUS CodechalEncodeCscDsG12::SendSurfaceCsc(PMOS_COMMAND_BUFFER cmdBuffer)
                                                    cscColorNv12Linear == m_colorRawSurface);
     }
 
-    if(m_encoder->m_vdencEnabled && CODECHAL_HEVC == m_standard)
+    if (m_encoder->m_vdencEnabled && (CODECHAL_HEVC == m_standard || CODECHAL_AVC == m_standard))
     {
         surfaceParams.bCheckCSC8Format= true;
     }
 
-    // when input surface is NV12 tiled and not aligned by 4 bytes, need kernel to do the
-    // padding copy by forcing to linear format and set the HeightInUse as Linear format
-    // kernel will use this info to calucate UV offset
     surfaceParams.psSurface = m_surfaceParamsCsc.psInputSurface;
-    if (cscColorNv12Linear == m_colorRawSurface ||
-        (cscColorNv12TileY == m_colorRawSurface && m_cscFlag == 1))
+    if (cscColorNv12Linear == m_colorRawSurface)
     {
         surfaceParams.dwHeightInUse = (surfaceParams.psSurface->dwHeight * 3) / 2;
     }
@@ -851,6 +841,16 @@ MOS_STATUS CodechalEncodeCscDsG12::InitSfcState()
         CODECHAL_ENCODE_CHK_STATUS_RETURN(m_sfcState->Initialize(m_hwInterface, m_osInterface));
 
         m_sfcState->SetInputColorSpace(MHW_CSpace_sRGB);
+    }
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS CodechalEncodeCscDsG12::CheckRawSurfaceAlignment(MOS_SURFACE surface)
+{
+    if (m_cscEnableCopy && (surface.dwWidth % m_rawSurfAlignment || surface.dwHeight % m_rawSurfAlignment) &&
+        m_colorRawSurface != cscColorNv12TileY)
+    {
+        m_cscRequireCopy = 1;
     }
     return MOS_STATUS_SUCCESS;
 }

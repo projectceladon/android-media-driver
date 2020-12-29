@@ -45,6 +45,10 @@ public:
 
     virtual MOS_STATUS Init() override;
 
+    virtual MOS_STATUS Init(
+        CODECHAL_STANDARD           codecStandard,
+        CodecDecodeJpegChromaType   jpegChromaType);
+
     virtual MOS_STATUS Prepare() override;
 
     virtual MOS_STATUS Destroy() override;
@@ -76,8 +80,12 @@ protected:
 
     //!
     //! \brief    Get width and height align unit of input format
-    //! \param    [in] inputFormat
-    //!           input format
+    //! \param    [in] format
+    //!           format
+    //! \param    [in] bOutput
+    //!           is Output or not
+    //! \param    [in] bRotateNeeded
+    //!           is rotated or not
     //! \param    [out] widthAlignUnit
     //!           width align unit
     //! \param    [out] heightAlignUnit
@@ -85,7 +93,9 @@ protected:
     //! \return   void
     //!
     virtual void GetFormatWidthHeightAlignUnit(
-        MOS_FORMAT              inputFormat,
+        MOS_FORMAT              format,
+        bool                    bOutput,
+        bool                    bRotateNeeded,
         uint16_t                &widthAlignUnit,
         uint16_t                &heightAlignUnit);
 
@@ -122,7 +132,7 @@ protected:
     //! \return   MOS_STATUS
     //!  MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    MOS_STATUS SetRectSurfaceAlignment(MOS_FORMAT format, bool isOutputSurf, uint32_t &width, uint32_t &height, RECT &rcSrc, RECT &rcDst);
+    MOS_STATUS SetRectSurfaceAlignment(bool isOutputSurf, uint32_t &width, uint32_t &height, RECT &rcSrc, RECT &rcDst);
 
 protected:
     FeatureParamScaling          m_scalingParams;
@@ -137,14 +147,13 @@ protected:
     VPHAL_CSPACE                 m_colorFillSrcCspace = {};                //!< Cspace of the source ColorFill Color
     VPHAL_CSPACE                 m_colorFillRTCspace = {};                 //!< Cspace of the Render Target
 
+    bool                         m_bVdbox            = false;
+    CODECHAL_STANDARD            m_codecStandard     = CODECHAL_STANDARD_MAX;
+    CodecDecodeJpegChromaType    m_jpegChromaType    = jpegYUV400;
 };
 
-struct HW_FILTER_SCALING_PARAM
+struct HW_FILTER_SCALING_PARAM : public HW_FILTER_PARAM
 {
-    FeatureType             type;
-    PVP_MHWINTERFACE        pHwInterface;
-    VP_EXECUTE_CAPS         vpExecuteCaps;
-    PacketParamFactoryBase *pPacketParamFactory;
     FeatureParamScaling     scalingParams;
 };
 
@@ -184,6 +193,17 @@ public:
     virtual bool IsFeatureEnabled(VP_EXECUTE_CAPS vpExecuteCaps);
     virtual HwFilterParameter *CreateHwFilterParam(VP_EXECUTE_CAPS vpExecuteCaps, SwFilterPipe &swFilterPipe, PVP_MHWINTERFACE pHwInterface);
 
+    static VpPacketParameter* CreatePacketParam(HW_FILTER_PARAM& param)
+    {
+        if (param.type != FeatureTypeScalingOnSfc)
+        {
+            VP_PUBLIC_ASSERTMESSAGE("Invalid parameter for SFC Scaling!");
+            return nullptr;
+        }
+
+        HW_FILTER_SCALING_PARAM* scalingParam = (HW_FILTER_SCALING_PARAM*)(&param);
+        return VpSfcScalingParameter::Create(*scalingParam);
+    }
 private:
     PacketParamFactory<VpSfcScalingParameter> m_PacketParamFactory;
 };

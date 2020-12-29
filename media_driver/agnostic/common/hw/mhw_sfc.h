@@ -31,6 +31,8 @@
 #include "mhw_state_heap.h"
 #include "mhw_utilities.h"
 #include "mos_os.h"
+#include "codec_def_common.h"
+#include "codec_def_decode_jpeg.h"
 
 static const int   MHW_SFC_CACHELINE_SIZE    = 64;
 static const int   MHW_SFC_MIN_HEIGHT        = 128;
@@ -195,6 +197,7 @@ typedef struct _MHW_SFC_AVS_STATE
     uint8_t                         sfcPipeMode;                        //!< SFC Pipe Mode
     uint32_t                        dwInputHorizontalSiting;
     uint32_t                        dwInputVerticalSitting;
+    uint32_t                        dwAVSFilterMode;                   // Bilinear, 5x5 or 8x8
 } MHW_SFC_AVS_STATE, *PMHW_SFC_AVS_STATE;
 
 //!
@@ -479,6 +482,22 @@ public:
         float                           fHPStrength,
         float                           fLanczosT);
 
+    //!
+    //! \brief      Sets AVS Scaling Mode. Will configure the different coefficients of 8-Tap polyphase filter according to scaling mode.
+    //! \param      [in] ScalingMode
+    //!             AVS scaling mode e.g. Nearest, 8-Tap polyphase etc.
+    //! \return     MOS_STATUS
+    //!
+    virtual MOS_STATUS SetSfcAVSScalingMode(
+        MHW_SCALING_MODE  ScalingMode)
+    {
+        m_scalingMode = ScalingMode;
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual MOS_STATUS GetInputFrameWidthHeightAlignUnit(uint32_t &widthAlignUnit, uint32_t &heightAlignUnit,
+        bool bVdbox, CODECHAL_STANDARD codecStandard, CodecDecodeJpegChromaType jpegChromaType);
+
 protected:
 
     MhwSfcInterface(PMOS_INTERFACE pOsInterface);
@@ -541,6 +560,8 @@ public:
     MHW_MEMORY_OBJECT_CONTROL_PARAMS           m_outputSurfCtrl;          // Output Frame caching control bits
     MHW_MEMORY_OBJECT_CONTROL_PARAMS           m_avsLineBufferCtrl;       // AVS Line Buffer caching control bits
     MHW_MEMORY_OBJECT_CONTROL_PARAMS           m_iefLineBufferCtrl;       // IEF Line Buffer caching control bits
+
+    MHW_SCALING_MODE                           m_scalingMode;
 };
 
 #endif // __MHW_SFC_H__

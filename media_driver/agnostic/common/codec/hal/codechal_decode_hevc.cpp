@@ -2047,6 +2047,10 @@ MOS_STATUS CodechalDecodeHevc::SendSliceLongFormat(
         cmdBuffer,
         hevcSliceState));
 
+    CODECHAL_DECODE_CHK_STATUS_RETURN(m_hcpInterface->AddHcpProtectStateCmd(
+        cmdBuffer,
+        hevcSliceState));
+
     if (! m_hcpInterface->IsHevcISlice(slc->LongSliceFlags.fields.slice_type))
     {
         MHW_VDBOX_HEVC_REF_IDX_PARAMS refIdxParams;
@@ -2621,7 +2625,8 @@ MOS_STATUS CodechalDecodeHevc::AllocateStandard (
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_SF_2_DMA_SUBMITS_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_enableSf2DmaSubmits = userFeatureData.u32Data ? true : false;
     }
 
@@ -3065,7 +3070,7 @@ MOS_STATUS CodechalDecodeHevc::DumpIQParams(
     {
         oss << "ucScalingLists1[" << std::dec << +idx2 << "]:" << std::endl;
 
-        for (idx = 0; idx < 56; idx += 8)
+        for (idx = 0; idx < 64; idx += 8)
         {
             oss << "ucScalingLists1[" << std::dec << +idx / 8 << "]:" << std::endl;
             for (uint8_t i = 0; i < 8; i++)
@@ -3079,7 +3084,7 @@ MOS_STATUS CodechalDecodeHevc::DumpIQParams(
     {
         oss << "ucScalingLists2[" << std::dec << +idx2 << "]:" << std::endl;
 
-        for (idx = 0; idx < 56; idx += 8)
+        for (idx = 0; idx < 64; idx += 8)
         {
             oss << "ucScalingLists2[" << std::dec << +idx / 8 << "]:" << std::endl;
             for (uint8_t i = 0; i < 8; i++)
@@ -3092,7 +3097,7 @@ MOS_STATUS CodechalDecodeHevc::DumpIQParams(
     {
         oss << "ucScalingLists3[" << std::dec << +idx2 << "]:" << std::endl;
 
-        for (idx = 0; idx < 56; idx += 8)
+        for (idx = 0; idx < 64; idx += 8)
         {
             oss << "ucScalingLists3[" << std::dec << +idx / 8 << "]:" << std::endl;
             for (uint8_t i = 0; i < 8; i++)

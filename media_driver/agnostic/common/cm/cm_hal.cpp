@@ -717,53 +717,36 @@ MOS_STATUS HalCm_AllocateTables(
     MOS_STATUS              eStatus = MOS_STATUS_SUCCESS;
     PCM_HAL_DEVICE_PARAM    deviceParam;
     uint8_t                 *pb;
-    uint32_t                lookUpTableSize;
-    uint32_t                samplerTableSize;
-    uint32_t                vmeTableSize;
-    uint32_t                sampler8x8TableSize;
-    uint32_t                taskStatusTableSize;
-    uint32_t                bt2DIndexTableSize;
-    uint32_t                bt2DUPIndexTableSize;
-    uint32_t                bt3DIndexTableSize;
-    uint32_t                btbufferIndexTableSize;
-    uint32_t                samplerIndexTableSize;
-    uint32_t                vmeIndexTableSize;
-    uint32_t                sampler8x8IndexTableSize;
-    uint32_t                bufferTableSize;
-    uint32_t                i2DSURFUPTableSize;
-    uint32_t                i3DSurfTableSize;
-    uint32_t                size;
-    uint32_t                i2DSURFTableSize;
 
     deviceParam  = &state->cmDeviceParam;
 
-    lookUpTableSize        = deviceParam->max2DSurfaceTableSize    *
+    uint32_t lookUpTableSize = deviceParam->max2DSurfaceTableSize    *
                               sizeof(CMLOOKUP_ENTRY);
-    i2DSURFTableSize        = deviceParam->max2DSurfaceTableSize    *
+    uint32_t i2DSURFTableSize = deviceParam->max2DSurfaceTableSize    *
                             sizeof(CM_HAL_SURFACE2D_ENTRY);
-    bufferTableSize        = deviceParam->maxBufferTableSize       *
+    uint32_t bufferTableSize = deviceParam->maxBufferTableSize       *
                               sizeof(CM_HAL_BUFFER_ENTRY);
-    i2DSURFUPTableSize      = deviceParam->max2DSurfaceUPTableSize  *
+    uint32_t i2DSURFUPTableSize = deviceParam->max2DSurfaceUPTableSize  *
                               sizeof(CM_HAL_SURFACE2D_UP_ENTRY);
-    i3DSurfTableSize        = deviceParam->max3DSurfaceTableSize    *
+    uint32_t i3DSurfTableSize = deviceParam->max3DSurfaceTableSize    *
                               sizeof(CM_HAL_3DRESOURCE_ENTRY);
-    samplerTableSize       = deviceParam->maxSamplerTableSize      *
+    uint32_t samplerTableSize = deviceParam->maxSamplerTableSize      *
                               sizeof(MHW_SAMPLER_STATE_PARAM);
-    sampler8x8TableSize    = deviceParam->maxSampler8x8TableSize      *
+    uint32_t sampler8x8TableSize = deviceParam->maxSampler8x8TableSize      *
                               sizeof(CM_HAL_SAMPLER_8X8_ENTRY);
-    taskStatusTableSize    = deviceParam->maxTasks                 * sizeof(char);
-    bt2DIndexTableSize     = deviceParam->max2DSurfaceTableSize    * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
-    bt2DUPIndexTableSize   = deviceParam->max2DSurfaceUPTableSize  * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
-    bt3DIndexTableSize     = deviceParam->max3DSurfaceTableSize    * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
-    btbufferIndexTableSize = deviceParam->maxBufferTableSize       * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
-    samplerIndexTableSize  = deviceParam->maxSamplerTableSize      * sizeof(char);
-    sampler8x8IndexTableSize = deviceParam->maxSampler8x8TableSize      * sizeof(char);
+    uint32_t taskStatusTableSize = deviceParam->maxTasks                 * sizeof(char);
+    uint32_t bt2DIndexTableSize = deviceParam->max2DSurfaceTableSize    * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
+    uint32_t bt2DUPIndexTableSize = deviceParam->max2DSurfaceUPTableSize  * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
+    uint32_t bt3DIndexTableSize = deviceParam->max3DSurfaceTableSize    * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
+    uint32_t btbufferIndexTableSize = deviceParam->maxBufferTableSize       * sizeof(CM_HAL_MULTI_USE_BTI_ENTRY);
+    uint32_t samplerIndexTableSize = deviceParam->maxSamplerTableSize      * sizeof(char);
+    uint32_t sampler8x8IndexTableSize = deviceParam->maxSampler8x8TableSize      * sizeof(char);
 
-    size                   = lookUpTableSize          +
-                              i2DSURFTableSize          +
+    uint32_t size           = lookUpTableSize          +
+                              i2DSURFTableSize         +
                               bufferTableSize          +
-                              i2DSURFUPTableSize        +
-                              i3DSurfTableSize          +
+                              i2DSURFUPTableSize       +
+                              i3DSurfTableSize         +
                               samplerTableSize         +
                               sampler8x8TableSize      +
                               taskStatusTableSize      +
@@ -9484,19 +9467,17 @@ MOS_STATUS HalCm_Set2DSurfaceStateParam(
      uint32_t                                 aliasIndex,
      uint32_t                                 handle)
 {
-    MOS_STATUS eStatus;
-    uint32_t width;
-    uint32_t height;
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
     CM_CHK_NULL_GOTOFINISH_MOSERROR(state);
     CM_CHK_NULL_GOTOFINISH_MOSERROR(param);
 
-    eStatus     = MOS_STATUS_SUCCESS;
     if (aliasIndex < state->surfaceArraySize)
     {
         state->umdSurf2DTable[handle].surfStateSet = true;
     }
-    state->umdSurf2DTable[handle].surfaceStateParam[aliasIndex / state->surfaceArraySize] = *param;
+    state->umdSurf2DTable[handle].surfaceStateParam[
+        aliasIndex / state->surfaceArraySize] = *param;
 
 finish:
     return eStatus;
@@ -10330,7 +10311,8 @@ CM_STATE_BUFFER_TYPE HalCm_GetStateBufferTypeForKernel(
     }
 }
 
-void LoadUserFeatures(MOS_GPUCTX_CREATOPTIONS *createOptions)
+static void LoadUserFeatures(CM_HAL_STATE *halState,
+                             MOS_GPUCTX_CREATOPTIONS *createOptions)
 {
 #if (_DEBUG || _RELEASE_INTERNAL)
     MOS_USER_FEATURE_VALUE_DATA  user_feature_data;
@@ -10338,7 +10320,7 @@ void LoadUserFeatures(MOS_GPUCTX_CREATOPTIONS *createOptions)
     MOS_STATUS result
             = MOS_UserFeature_ReadValue_ID(
                 nullptr, __MEDIA_USER_FEATURE_VALUE_MDF_FORCE_RAMODE,
-                &user_feature_data);
+                &user_feature_data, halState->osInterface->pOsContext);
     if (MOS_STATUS_SUCCESS == result && user_feature_data.i32Data == 1)
     {
         createOptions->RAMode = 1;
@@ -10348,7 +10330,7 @@ void LoadUserFeatures(MOS_GPUCTX_CREATOPTIONS *createOptions)
     userFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;
     userFeatureWriteData.Value.i32Data = createOptions->RAMode;
     userFeatureWriteData.ValueID       = __MEDIA_USER_FEATURE_VALUE_MDF_FORCE_RAMODE;
-    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1);
+    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, halState->osInterface->pOsContext);
 
 #endif
     return;
@@ -10362,7 +10344,7 @@ MOS_STATUS HalCm_CreateGPUContext(
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
-    LoadUserFeatures(pMosGpuContextCreateOption);
+    LoadUserFeatures(state, pMosGpuContextCreateOption);
 
     // Create Compute Context on Compute Node
     CM_CHK_HRESULT_GOTOFINISH_MOSERROR(state->osInterface->pfnCreateGpuContext(
@@ -10384,7 +10366,7 @@ GPU_CONTEXT_HANDLE
 HalCm_CreateGpuComputeContext(CM_HAL_STATE *state,
                               MOS_GPUCTX_CREATOPTIONS *createOptions)
 {
-    LoadUserFeatures(createOptions);
+    LoadUserFeatures(state, createOptions);
 
     GPU_CONTEXT_HANDLE context_handle
             = state->osInterface->pfnCreateGpuComputeContext(
@@ -10745,7 +10727,8 @@ MOS_STATUS HalCm_Create(
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_MDF_FORCE_EXECUTION_PATH_ID,
-            &userFeatureData);
+            &userFeatureData,
+            state->osInterface->pOsContext);
 
         if (userFeatureData.i32Data == 1)
         {
@@ -10944,7 +10927,8 @@ void HalCm_GetUserFeatureSettings(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_MDF_MAX_THREAD_NUM_ID,
-        &userFeatureData);
+        &userFeatureData,
+        cmState->osInterface->pOsContext);
 
     if (userFeatureData.i32Data != 0)
     {

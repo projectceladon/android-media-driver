@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,7 +30,6 @@
 #include "media_pipeline.h"
 #include "media_cmd_task.h"
 #include "media_packet.h"
-#include "media_perf_profiler.h"
 
 MediaPipeline::MediaPipeline(PMOS_INTERFACE osInterface) : m_osInterface(osInterface)
 {
@@ -99,7 +98,7 @@ MOS_STATUS MediaPipeline::InitPlatform()
 MOS_STATUS MediaPipeline::UserFeatureReport()
 {
 #if (_DEBUG || _RELEASE_INTERNAL)
-    WriteUserFeature(__MEDIA_USER_FEATURE_VALUE_APOGEIOS_ENABLE_ID, 1);
+    WriteUserFeature(__MEDIA_USER_FEATURE_VALUE_APOGEIOS_ENABLE_ID, 1, m_osInterface->pOsContext);
 #endif
     return MOS_STATUS_SUCCESS;
 }
@@ -139,6 +138,26 @@ MOS_STATUS MediaPipeline::ActivatePacket(uint32_t packetId, bool immediateSubmit
     prop.stateProperty.pipeIndexForSubmit = pipeNum;
     prop.stateProperty.currentSubPass     = subPass;
     prop.stateProperty.currentRow         = rowNum;
+    MOS_TraceEventExt(EVENT_PIPE_PACKET, EVENT_TYPE_INFO, &packetId, sizeof(packetId), &prop.stateProperty, sizeof(StateParams));
+
+    m_activePacketList.push_back(prop);
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MediaPipeline::ActivatePacket(uint32_t packetId, bool immediateSubmit, StateParams &stateProperty)
+{
+    auto iter = m_packetList.find(packetId);
+    if (iter == m_packetList.end())
+    {
+        return MOS_STATUS_INVALID_PARAMETER;
+    }
+
+    PacketProperty prop;
+    prop.packetId        = iter->first;
+    prop.packet          = iter->second;
+    prop.immediateSubmit = immediateSubmit;
+    prop.stateProperty   = stateProperty;
+    MOS_TraceEventExt(EVENT_PIPE_PACKET, EVENT_TYPE_INFO, &packetId, sizeof(packetId), &stateProperty, sizeof(StateParams));
 
     m_activePacketList.push_back(prop);
     return MOS_STATUS_SUCCESS;
@@ -146,9 +165,11 @@ MOS_STATUS MediaPipeline::ActivatePacket(uint32_t packetId, bool immediateSubmit
 
 MOS_STATUS MediaPipeline::ExecuteActivePackets()
 {
+    MOS_TraceEventExt(EVENT_PIPE_EXE, EVENT_TYPE_START, nullptr, 0, nullptr, 0);
     for (auto prop : m_activePacketList)
     {
         prop.stateProperty.statusReport = m_statusReport;
+        MOS_TraceEventExt(EVENT_PIPE_EXE, EVENT_TYPE_INFO, &prop.packetId, sizeof(uint32_t), nullptr, 0);
 
         MediaTask *task = prop.packet->GetActiveTask();
 
@@ -164,6 +185,7 @@ MOS_STATUS MediaPipeline::ExecuteActivePackets()
 
     m_activePacketList.clear();
 
+    MOS_TraceEventExt(EVENT_PIPE_EXE, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return MOS_STATUS_SUCCESS;
 }
 

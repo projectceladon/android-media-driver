@@ -29,6 +29,7 @@
 #include "hw_filter.h"
 #include "sw_filter_pipe.h"
 #include "vp_obj_factories.h"
+#include "vp_pipeline.h"
 
 using namespace vp;
 
@@ -64,6 +65,20 @@ MOS_STATUS HwFilter::Initialize(HW_FILTER_PARAMS &param)
     {
         VP_PUBLIC_CHK_STATUS_RETURN((*it)->ConfigParams(*this));
     }
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS HwFilter::ConfigParam(HW_FILTER_PARAM& param)
+{
+    if (!param.pfnCreatePacketParam)
+    {
+        VP_PUBLIC_ASSERTMESSAGE("Create packet params function is Null, return invalid params");
+        return MOS_STATUS_INVALID_PARAMETER;
+    }
+
+    VpPacketParameter* p = param.pfnCreatePacketParam(param);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_Params.Params.push_back(p);
     return MOS_STATUS_SUCCESS;
 }
 
@@ -127,28 +142,17 @@ MOS_STATUS HwFilterVebox::SetPacketParams(VpCmdPacket &packet)
     return bRet ? MOS_STATUS_SUCCESS : MOS_STATUS_UNKNOWN;
 }
 
-MOS_STATUS HwFilterVebox::ConfigDnParam(HW_FILTER_DN_PARAM &param)
-{
-    if (FeatureTypeDnOnVebox == param.type)
-    {
-        VpPacketParameter *p = VpVeboxDnParameter::Create(param);
-        VP_PUBLIC_CHK_NULL_RETURN(p);
-        m_Params.Params.push_back(p);
-    }
-    return MOS_STATUS_SUCCESS;
-}
-
 /****************************************************************************************************/
-/*                                      HwFilterSfc                                                 */
+/*                                      HwFilterVeboxSfc                                                 */
 /****************************************************************************************************/
 
-HwFilterSfc::HwFilterSfc(VpInterface &vpInterface) : HwFilterVebox(vpInterface, EngineTypeSfc)
+HwFilterVeboxSfc::HwFilterVeboxSfc(VpInterface &vpInterface) : HwFilterVebox(vpInterface, EngineTypeVeboxSfc)
 {}
 
-HwFilterSfc::~HwFilterSfc()
+HwFilterVeboxSfc::~HwFilterVeboxSfc()
 {}
 
-MOS_STATUS HwFilterSfc::SetPacketParams(VpCmdPacket &packet)
+MOS_STATUS HwFilterVeboxSfc::SetPacketParams(VpCmdPacket &packet)
 {
     return HwFilterVebox::SetPacketParams(packet);
 }

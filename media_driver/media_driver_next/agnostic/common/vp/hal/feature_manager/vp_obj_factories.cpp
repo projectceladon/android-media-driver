@@ -62,7 +62,7 @@ MOS_STATUS HwFilterPipeFactory::Destory(HwFilterPipe *&pHwfilterPipe)
 /*                                      HwFilterFactory                                             */
 /****************************************************************************************************/
 
-HwFilterFactory::HwFilterFactory(VpInterface &vpInterface) : m_allocatorVebox(vpInterface), m_allocatorSfc(vpInterface), m_allocatorRender(vpInterface)
+HwFilterFactory::HwFilterFactory(VpInterface &vpInterface) : m_allocatorVebox(vpInterface), m_allocatorVeboxSfc(vpInterface), m_allocatorRender(vpInterface)
 {
 }
 
@@ -78,8 +78,8 @@ HwFilter *HwFilterFactory::Create(HW_FILTER_PARAMS &param)
     case EngineTypeVebox:
         p = m_allocatorVebox.Create();
         break;
-    case EngineTypeSfc:
-        p = m_allocatorSfc.Create();
+    case EngineTypeVeboxSfc:
+        p = m_allocatorVeboxSfc.Create();
         break;
     case EngineTypeRender:
         p = m_allocatorRender.Create();
@@ -120,12 +120,12 @@ void HwFilterFactory::Destory(HwFilter *&pHwFilter)
             }
             break;
         }
-        case EngineTypeSfc:
+        case EngineTypeVeboxSfc:
         {
-            HwFilterSfc *p = dynamic_cast<HwFilterSfc*>(pHwFilter);
+            HwFilterVeboxSfc *p = dynamic_cast<HwFilterVeboxSfc*>(pHwFilter);
             if (p)
             {
-                m_allocatorSfc.Destory(p);
+                m_allocatorVeboxSfc.Destory(p);
                 pHwFilter = nullptr;
             }
             else
@@ -170,13 +170,29 @@ SwFilterPipeFactory::~SwFilterPipeFactory()
 {
 }
 
-MOS_STATUS SwFilterPipeFactory::Create(VP_PIPELINE_PARAMS &params, SwFilterPipe *&swFilterPipe)
+MOS_STATUS SwFilterPipeFactory::Create(PVP_PIPELINE_PARAMS params, SwFilterPipe *&swFilterPipe)
 {
+    VP_PUBLIC_CHK_NULL_RETURN(params);
     swFilterPipe = m_allocator.Create();
     VP_PUBLIC_CHK_NULL_RETURN(swFilterPipe);
 
     FeatureRule featureRule;
-    MOS_STATUS status = swFilterPipe->Initialize(params, featureRule);
+    MOS_STATUS status = swFilterPipe->Initialize(*params, featureRule);
+
+    if (MOS_FAILED(status))
+    {
+        m_allocator.Destory(swFilterPipe);
+    }
+    return status;
+}
+
+MOS_STATUS SwFilterPipeFactory::Create(VEBOX_SFC_PARAMS *params, SwFilterPipe *&swFilterPipe)
+{
+    VP_PUBLIC_CHK_NULL_RETURN(params);
+    swFilterPipe = m_allocator.Create();
+    VP_PUBLIC_CHK_NULL_RETURN(swFilterPipe);
+
+    MOS_STATUS status = swFilterPipe->Initialize(*params);
 
     if (MOS_FAILED(status))
     {
@@ -196,93 +212,4 @@ MOS_STATUS SwFilterPipeFactory::Create(SwFilterPipe *&swFilterPipe)
 void SwFilterPipeFactory::Destory(SwFilterPipe *&swFilterPipe)
 {
     m_allocator.Destory(swFilterPipe);
-}
-
-/****************************************************************************************************/
-/*                                      SwFilterFactory                                             */
-/****************************************************************************************************/
-
-SwFilterFactory::SwFilterFactory(VpInterface &vpInterface) :
-    m_allocatorCsc(vpInterface),
-    m_allocatorRotMir(vpInterface),
-    m_allocatorScaling(vpInterface),
-    m_allocatorDn(vpInterface)
-{
-}
-
-SwFilterFactory::~SwFilterFactory()
-{
-}
-
-SwFilter *SwFilterFactory::Create(FeatureType type)
-{
-    SwFilter *swFilter = nullptr;
-    switch (type & FEATURE_TYPE_MASK)
-    {
-    case FeatureTypeCsc:
-        swFilter = m_allocatorCsc.Create();
-        break;
-    case FeatureTypeRotMir:
-        swFilter = m_allocatorRotMir.Create();
-        break;
-    case FeatureTypeScaling:
-        swFilter = m_allocatorScaling.Create();
-        break;
-    case FeatureTypeDn:
-        swFilter = m_allocatorDn.Create();
-        break;
-    default:
-        break;
-    }
-
-    if (swFilter)
-    {
-        swFilter->SetFeatureType(type);
-    }
-
-    return swFilter;
-}
-
-void SwFilterFactory::Destory(SwFilter *&swFilter)
-{
-    if (nullptr == swFilter)
-    {
-        return;
-    }
-
-    swFilter->Clean();
-    swFilter->SetLocation(nullptr);
-    FeatureType type = swFilter->GetFeatureType();
-
-    switch (type & FEATURE_TYPE_MASK)
-    {
-    case FeatureTypeCsc:
-    {
-        SwFilterCsc *filter = dynamic_cast<SwFilterCsc *>(swFilter);
-        m_allocatorCsc.Destory(filter);
-        break;
-    }
-    case FeatureTypeRotMir:
-    {
-        SwFilterRotMir *filter = dynamic_cast<SwFilterRotMir *>(swFilter);
-        m_allocatorRotMir.Destory(filter);
-        break;
-    }
-    case FeatureTypeScaling:
-    {
-        SwFilterScaling *filter = dynamic_cast<SwFilterScaling *>(swFilter);
-        m_allocatorScaling.Destory(filter);
-        break;
-    }
-    case FeatureTypeDn:
-    {
-        SwFilterDenoise *filter = dynamic_cast<SwFilterDenoise *>(swFilter);
-        m_allocatorDn.Destory(filter);
-        break;
-    }
-    default:
-        break;
-    }
-
-    swFilter = nullptr;
 }

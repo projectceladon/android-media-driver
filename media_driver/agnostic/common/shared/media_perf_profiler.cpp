@@ -115,20 +115,6 @@ MediaPerfProfiler::MediaPerfProfiler()
 
     m_profilerEnabled = 0;
 
-    MOS_USER_FEATURE_VALUE_DATA     userFeatureData;
-    // Check whether profiler is enabled
-    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_ID,
-        &userFeatureData);
-    m_profilerEnabled = userFeatureData.bData;
-
-    if (m_profilerEnabled == 0)
-    {
-        return;
-    }
-
     m_mutex = MOS_CreateMutex();
 
     if (m_mutex)
@@ -189,12 +175,15 @@ void MediaPerfProfiler::Destroy(MediaPerfProfiler* profiler, void* context, MOS_
     {
         if (profiler->m_initialized == true)
         {
-            profiler->SavePerfData(osInterface);
-    
+            if(profiler->m_enableProfilerDump)
+            {
+                profiler->SavePerfData(osInterface);
+            }
+
             osInterface->pfnFreeResource(
                 osInterface,
                 &profiler->m_perfStoreBuffer);
-    
+
             profiler->m_initialized = false;
         }
 
@@ -209,14 +198,24 @@ void MediaPerfProfiler::Destroy(MediaPerfProfiler* profiler, void* context, MOS_
 MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterface)
 {
     MOS_STATUS status = MOS_STATUS_SUCCESS;
+    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
+
+    CHK_NULL_RETURN(osInterface);
+    CHK_NULL_RETURN(m_mutex);
+
+    // Check whether profiler is enabled
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_ID,
+        &userFeatureData,
+        osInterface->pOsContext);
+    m_profilerEnabled = userFeatureData.bData;
 
     if (m_profilerEnabled == 0 || m_mutex == nullptr)
     {
         return MOS_STATUS_SUCCESS;
     }
-
-    CHK_NULL_RETURN(osInterface);
-    CHK_NULL_RETURN(m_mutex);
 
     MOS_LockMutex(m_mutex);
 
@@ -229,7 +228,7 @@ MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterfa
         return status;
     }
 
-    MOS_USER_FEATURE_VALUE_DATA     userFeatureData;
+    m_enableProfilerDump = MosUtilities::MosIsProfilerDumpEnabled();
 
     // Read output file name
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -237,7 +236,8 @@ MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterfa
     status = MOS_UserFeature_ReadValue_ID(
         NULL,
         __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_OUTPUT_FILE,
-        &userFeatureData);
+        &userFeatureData,
+        osInterface->pOsContext);
 
     if (status != MOS_STATUS_SUCCESS)
     {
@@ -261,7 +261,8 @@ MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterfa
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_BUFFER_SIZE,
-        &userFeatureData);
+        &userFeatureData,
+        osInterface->pOsContext);
     m_bufferSize = userFeatureData.u32Data;
 
     m_timerBase = Mos_Specific_GetTsFrequency(osInterface);
@@ -271,7 +272,8 @@ MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterfa
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_ENABLE_MULTI_PROCESS,
-        &userFeatureData);
+        &userFeatureData,
+        osInterface->pOsContext);
     m_multiprocess = userFeatureData.u32Data;
 
     // Read memory information register address
@@ -282,7 +284,8 @@ MOS_STATUS MediaPerfProfiler::Initialize(void* context, MOS_INTERFACE *osInterfa
         MOS_UserFeature_ReadValue_ID(                                   
             nullptr,                                                    
             __MEDIA_USER_FEATURE_VALUE_PERF_PROFILER_REGISTER_1 + regIndex,
-            &userFeatureData);                                          
+            &userFeatureData,
+            osInterface->pOsContext);                                          
         m_registers[regIndex] = userFeatureData.u32Data;
     }
 
@@ -364,6 +367,7 @@ MOS_STATUS MediaPerfProfiler::StoreData(
 }
 
 MOS_STATUS MediaPerfProfiler::StoreRegister(
+    MOS_INTERFACE *osInterface,
     MhwMiInterface *miInterface, 
     PMOS_COMMAND_BUFFER cmdBuffer,
     uint32_t offset,
@@ -375,6 +379,13 @@ MOS_STATUS MediaPerfProfiler::StoreRegister(
     storeRegMemParams.presStoreBuffer = &m_perfStoreBuffer;
     storeRegMemParams.dwOffset        = offset;
     storeRegMemParams.dwRegister      = reg;
+
+    MEDIA_FEATURE_TABLE* skuTable = osInterface->pfnGetSkuTable(osInterface);
+    if(skuTable && MEDIA_IS_SKU(skuTable, FtrMemoryRemapSupport))
+    {
+        storeRegMemParams.dwOption = CCS_HW_FRONT_END_MMIO_REMAP;
+    }
+
     return miInterface->AddMiStoreRegisterMemCmd(cmdBuffer, &storeRegMemParams);
 }
 
@@ -488,6 +499,7 @@ MOS_STATUS MediaPerfProfiler::AddPerfCollectStartCmd(void* context,
         if (m_registers[regIndex] != 0)
         {
             CHK_STATUS_RETURN(StoreRegister(
+                osInterface,
                 miInterface,
                 cmdBuffer, 
                 BASE_OF_NODE(perfDataIndex) + OFFSET_OF(PerfEntry, beginRegisterValue[regIndex]),
@@ -561,6 +573,7 @@ MOS_STATUS MediaPerfProfiler::AddPerfCollectEndCmd(void* context,
         if (m_registers[regIndex] != 0)
         {
             CHK_STATUS_RETURN(StoreRegister(
+                osInterface,
                 miInterface,
                 cmdBuffer, 
                 BASE_OF_NODE(perfDataIndex) + OFFSET_OF(PerfEntry, endRegisterValue[regIndex]),

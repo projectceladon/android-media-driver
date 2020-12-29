@@ -30,6 +30,7 @@
 #include "vp_obj_factories.h"
 #include "vp_feature_manager.h"
 #include "vp_platform_interface.h"
+#include "sw_filter_handle.h"
 using namespace vp;
 
 /****************************************************************************************************/
@@ -49,7 +50,8 @@ Policy::Policy(VpInterface &vpInterface) : m_vpInterface(vpInterface)
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
         __VPHAL_BYPASS_COMPOSITION_ID,
-        &UserFeatureData));
+        &UserFeatureData,
+        m_vpInterface.GetHwInterface() && m_vpInterface.GetHwInterface()->m_osInterface ? m_vpInterface.GetHwInterface()->m_osInterface->pOsContext : nullptr));
     m_bypassCompMode = UserFeatureData.u32Data;
 }
 
@@ -77,8 +79,27 @@ MOS_STATUS Policy::Initialize()
     VP_PUBLIC_CHK_NULL_RETURN(vpPlatformInterface);
     VP_PUBLIC_CHK_STATUS_RETURN(vpPlatformInterface->InitVpVeboxSfcHwCaps(m_veboxHwEntry, Format_Count, m_sfcHwEntry, Format_Count));
     // Place hold for render hw caps.
-    // VP_PUBLIC_CHK_STATUS_RETURN(vpPlatformInterface->InitVpRenderHwCaps());
-    return RegisterFeatures();
+    VP_PUBLIC_CHK_STATUS_RETURN(vpPlatformInterface->InitVpRenderHwCaps());
+    VP_PUBLIC_CHK_STATUS_RETURN(RegisterFeatures());
+    m_initialized = true;
+    return MOS_STATUS_SUCCESS;
+}
+
+bool Policy::IsVeboxSfcFormatSupported(MOS_FORMAT  formatInput, MOS_FORMAT formatOutput)
+{
+    if (!m_initialized)
+    {
+        return false;
+    }
+    if (m_sfcHwEntry[formatInput].inputSupported   &&
+        m_sfcHwEntry[formatOutput].outputSupported)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 MOS_STATUS Policy::RegisterFeatures()
@@ -105,12 +126,27 @@ MOS_STATUS Policy::RegisterFeatures()
     VP_PUBLIC_CHK_NULL_RETURN(p);
     m_VeboxSfcFeatureHandlers.insert(std::make_pair(FeatureTypeCscOnVebox, p));
 
+    p = MOS_New(PolicyVeboxSteHandler);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_VeboxSfcFeatureHandlers.insert(std::make_pair(FeatureTypeSteOnVebox, p));
+
+    p = MOS_New(PolicyVeboxTccHandler);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_VeboxSfcFeatureHandlers.insert(std::make_pair(FeatureTypeTccOnVebox, p));
+
+    p = MOS_New(PolicyVeboxProcampHandler);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_VeboxSfcFeatureHandlers.insert(std::make_pair(FeatureTypeProcampOnVebox, p));
+
     // Next step to add a table to trace all SW features based on platforms
     m_featurePool.clear();
     m_featurePool.push_back(FeatureTypeCsc);
     m_featurePool.push_back(FeatureTypeScaling);
     m_featurePool.push_back(FeatureTypeRotMir);
     m_featurePool.push_back(FeatureTypeDn);
+    m_featurePool.push_back(FeatureTypeSte);
+    m_featurePool.push_back(FeatureTypeTcc);
+    m_featurePool.push_back(FeatureTypeProcamp);
 
     return MOS_STATUS_SUCCESS;
 }
@@ -241,6 +277,15 @@ MOS_STATUS Policy::BuildExecutionEngines(SwFilterSubPipe& SwFilterPipe)
         case FeatureTypeDn:
             GetDenoiseExecutionCaps(feature);
             break;
+        case FeatureTypeSte:
+            GetSteExecutionCaps(feature);
+            break;
+        case FeatureTypeTcc:
+            GetTccExecutionCaps(feature);
+            break;
+        case FeatureTypeProcamp:
+            GetProcampExecutionCaps(feature);
+            break;
         default:
             GetExecutionCaps(feature);
             VP_PUBLIC_NORMALMESSAGE("Feature didn't have supported in driver, default to use Render");
@@ -250,6 +295,7 @@ MOS_STATUS Policy::BuildExecutionEngines(SwFilterSubPipe& SwFilterPipe)
         if (feature->GetFilterEngineCaps().value == 0)
         {
             VP_PUBLIC_ASSERTMESSAGE("ERROR");
+            return MOS_STATUS_INVALID_PARAMETER;
         }
     }
     return MOS_STATUS_SUCCESS;
@@ -512,12 +558,12 @@ MOS_STATUS Policy::GetDenoiseExecutionCaps(SwFilter* feature)
     VP_FUNC_CALL();
     VP_PUBLIC_CHK_NULL_RETURN(feature);
 
-    SwFilterDenoise* denoise = (SwFilterDenoise*)feature;
+    SwFilterDenoise* denoise = dynamic_cast<SwFilterDenoise*>(feature);
+    VP_PUBLIC_CHK_NULL_RETURN(denoise);
 
-    FeatureParamDenoise* denoiseParams = &denoise->GetSwFilterParams();
-
-    VP_EngineEntry* denoiseEngine = &denoise->GetFilterEngineCaps();
-    MOS_FORMAT      inputformat = denoiseParams->formatInput;
+    FeatureParamDenoise& denoiseParams = denoise->GetSwFilterParams();
+    VP_EngineEntry& denoiseEngine = denoise->GetFilterEngineCaps();
+    MOS_FORMAT inputformat = denoiseParams.formatInput;
 
     // MOS_FORMAT is [-14,103], cannot use -14~-1 as index for m_veboxHwEntry
     if (inputformat < 0)
@@ -528,16 +574,10 @@ MOS_STATUS Policy::GetDenoiseExecutionCaps(SwFilter* feature)
     uint32_t        widthAlignUint  = m_veboxHwEntry[inputformat].horizontalAlignUnit;
     uint32_t        heightAlignUnit = m_veboxHwEntry[inputformat].verticalAlignUnit;
 
-    if (denoiseEngine->value != 0)
+    if (denoiseEngine.value != 0)
     {
         VP_PUBLIC_NORMALMESSAGE("Scaling Feature Already been processed, Skip further process");
         return MOS_STATUS_SUCCESS;
-    }
-
-    if (m_veboxHwEntry[inputformat].denoiseSupported)
-    {
-        denoiseEngine->bEnabled = 1;
-        denoiseEngine->VeboxNeeded = 1;
     }
 
     if (m_veboxHwEntry[inputformat].denoiseSupported)
@@ -554,10 +594,125 @@ MOS_STATUS Policy::GetDenoiseExecutionCaps(SwFilter* feature)
         {
             heightAlignUnit = MOS_ALIGN_CEIL(m_veboxHwEntry[inputformat].verticalAlignUnit, 2);
         }
+
+        if (MOS_IS_ALIGNED(denoiseParams.heightInput, heightAlignUnit))
+        {
+            denoiseEngine.bEnabled    = 1;
+            denoiseEngine.VeboxNeeded = 1;
+        }
+        else
+        {
+            VP_PUBLIC_NORMALMESSAGE("Denoise Feature is disabled since heightInput (%d) not being %d aligned.", denoiseParams.heightInput, heightAlignUnit);
+        }
     }
 
-    denoiseParams->srcWidthAlignUnit  = widthAlignUint;
-    denoiseParams->srcHeightAlignUnit = heightAlignUnit;
+    denoiseParams.widthAlignUnitInput = widthAlignUint;
+    denoiseParams.heightAlignUnitInput = heightAlignUnit;
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS Policy::GetSteExecutionCaps(SwFilter* feature)
+{
+    VP_FUNC_CALL();
+    VP_PUBLIC_CHK_NULL_RETURN(feature);
+
+    SwFilterSte* steFilter = dynamic_cast<SwFilterSte*>(feature);
+    VP_PUBLIC_CHK_NULL_RETURN(steFilter);
+
+    FeatureParamSte& steParams = steFilter->GetSwFilterParams();
+    VP_EngineEntry& steEngine = steFilter->GetFilterEngineCaps();
+    MOS_FORMAT inputformat = steParams.formatInput;
+
+    // MOS_FORMAT is [-14,103], cannot use -14~-1 as index for m_veboxHwEntry
+    if (inputformat < 0)
+    {
+        inputformat = Format_Any;
+    }
+
+    if (steEngine.value != 0)
+    {
+        VP_PUBLIC_NORMALMESSAGE("ACE Feature Already been processed, Skip further process");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    if (m_veboxHwEntry[inputformat].inputSupported &&
+        m_veboxHwEntry[inputformat].iecp)
+    {
+        steEngine.bEnabled = 1;
+        steEngine.VeboxNeeded = 1;
+        steEngine.VeboxIECPNeeded = 1;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS Policy::GetTccExecutionCaps(SwFilter* feature)
+{
+    VP_FUNC_CALL();
+    VP_PUBLIC_CHK_NULL_RETURN(feature);
+
+    SwFilterTcc* tccFilter = dynamic_cast<SwFilterTcc*>(feature);
+    VP_PUBLIC_CHK_NULL_RETURN(tccFilter);
+
+    FeatureParamTcc& tccParams = tccFilter->GetSwFilterParams();
+    VP_EngineEntry& tccEngine = tccFilter->GetFilterEngineCaps();
+    MOS_FORMAT inputformat = tccParams.formatInput;
+
+    // MOS_FORMAT is [-14,103], cannot use -14~-1 as index for m_veboxHwEntry
+    if (inputformat < 0)
+    {
+        inputformat = Format_Any;
+    }
+
+    if (tccEngine.value != 0)
+    {
+        VP_PUBLIC_NORMALMESSAGE("TCC Feature Already been processed, Skip further process");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    if (m_veboxHwEntry[inputformat].inputSupported &&
+        m_veboxHwEntry[inputformat].iecp)
+    {
+        tccEngine.bEnabled = 1;
+        tccEngine.VeboxNeeded = 1;
+        tccEngine.VeboxIECPNeeded = 1;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS Policy::GetProcampExecutionCaps(SwFilter* feature)
+{
+    VP_FUNC_CALL();
+    VP_PUBLIC_CHK_NULL_RETURN(feature);
+
+    SwFilterProcamp* procampFilter = dynamic_cast<SwFilterProcamp*>(feature);
+    VP_PUBLIC_CHK_NULL_RETURN(procampFilter);
+
+    FeatureParamProcamp& procampParams = procampFilter->GetSwFilterParams();
+    VP_EngineEntry& procampEngine = procampFilter->GetFilterEngineCaps();
+    MOS_FORMAT inputformat = procampParams.formatInput;
+
+    // MOS_FORMAT is [-14,103], cannot use -14~-1 as index for m_veboxHwEntry
+    if (inputformat < 0)
+    {
+        inputformat = Format_Any;
+    }
+
+    if (procampEngine.value != 0)
+    {
+        VP_PUBLIC_NORMALMESSAGE("Procamp Feature Already been processed, Skip further process");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    if (m_veboxHwEntry[inputformat].inputSupported &&
+        m_veboxHwEntry[inputformat].iecp)
+    {
+        procampEngine.bEnabled = 1;
+        procampEngine.VeboxNeeded = 1;
+        procampEngine.VeboxIECPNeeded = 1;
+    }
 
     return MOS_STATUS_SUCCESS;
 }
@@ -602,10 +757,13 @@ MOS_STATUS Policy::BuildFilters(SwFilterPipe& featurePipe, HW_FILTER_PARAMS& par
     {
         // only select Vebox only features
         caps.bVebox = 1;
+        caps.bIECP = engineCaps.VeboxIECPNeeded;
     }
     else
     {
         caps.bVebox  = ((engineCaps.VeboxNeeded != 0) || (engineCaps.SfcNeeded != 0)) ? 1 : 0;
+        caps.bIECP = (caps.bVebox) ? engineCaps.VeboxIECPNeeded : 0;
+
         VP_PUBLIC_CHK_STATUS_RETURN(UpdateFilterCaps(featurePipe, engineCaps, caps));
 
         caps.bSFC    = (engineCaps.SfcNeeded != 0) ? 1 : 0;
@@ -623,7 +781,19 @@ MOS_STATUS Policy::BuildFilters(SwFilterPipe& featurePipe, HW_FILTER_PARAMS& par
         caps.bComposite = (engineCaps.CompositionNeeded != 0);
     }
 
+    if (IsVeboxSecurePathEnabled(featurePipe, caps))
+    {
+        // Process Vebox Secure workload
+        VP_PUBLIC_CHK_STATUS_RETURN(BuildVeboxSecureFilters(featurePipe, caps, params));
+
+        VP_PUBLIC_CHK_STATUS_RETURN(SetupFilterResource(featurePipe, caps, params));
+
+        VP_PUBLIC_CHK_STATUS_RETURN(BuildExecuteHwFilter(featurePipe, caps, params));
+        return MOS_STATUS_SUCCESS;
+    }
+
     VP_PUBLIC_CHK_STATUS_RETURN(BuildExecuteFilter(featurePipe, caps, params));
+    VP_PUBLIC_CHK_STATUS_RETURN(featurePipe.ResetSecureFlag());
 
     /* Place Holder for Resource Manager to manage intermedia surface or HW needed surface in policy*/
 
@@ -643,6 +813,22 @@ MOS_STATUS Policy::UpdateFilterCaps(SwFilterPipe& featurePipe, VP_EngineEntry& e
     // Update the Engine Caps after engine setting up
     if (engineCaps.value !=0 && inputPipe)
     {
+        bool sfcNeeded = false;
+        // check whether sfc being must have.
+        for (auto filterID : m_featurePool)
+        {
+            feature = inputPipe->GetSwFilter(FeatureType(filterID));
+
+            if (feature)
+            {
+                if (feature->GetFilterEngineCaps().VeboxNeeded  == 0 &&
+                    feature->GetFilterEngineCaps().SfcNeeded    != 0)
+                {
+                    sfcNeeded = true;
+                    break;
+                }
+            }
+        }
         // check the feature pool, generate a workable engine Pipe
         for (auto filterID : m_featurePool)
         {
@@ -653,8 +839,16 @@ MOS_STATUS Policy::UpdateFilterCaps(SwFilterPipe& featurePipe, VP_EngineEntry& e
                 if (feature->GetFilterEngineCaps().VeboxNeeded != 0 &&
                     caps.bVebox)
                 {
-                    feature->GetFilterEngineCaps().SfcNeeded       = 0;
-                    feature->GetFilterEngineCaps().RenderNeeded    = 0;
+                    if (sfcNeeded && feature->GetFilterEngineCaps().SfcNeeded)
+                    {
+                        feature->GetFilterEngineCaps().VeboxNeeded  = 0;
+                        feature->GetFilterEngineCaps().RenderNeeded = 0;
+                    }
+                    else
+                    {
+                        feature->GetFilterEngineCaps().SfcNeeded    = 0;
+                        feature->GetFilterEngineCaps().RenderNeeded = 0;
+                    }
                 }
             }
         }
@@ -694,9 +888,18 @@ MOS_STATUS Policy::BuildExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
     VP_PUBLIC_CHK_STATUS_RETURN(featurePipe.Update());
     VP_PUBLIC_CHK_STATUS_RETURN(params.executedFilters->Update());
 
+    VP_PUBLIC_CHK_STATUS_RETURN(BuildExecuteHwFilter(featurePipe, caps, params));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS Policy::BuildExecuteHwFilter(SwFilterPipe& subSwFilterPipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
+{
+    VP_FUNC_CALL();
+
     if (caps.bVebox || caps.bSFC)
     {
-        params.Type = caps.bSFC ? EngineTypeSfc : EngineTypeVebox;
+        params.Type = caps.bSFC ? EngineTypeVeboxSfc : EngineTypeVebox;
         params.vpExecuteCaps = caps;
         auto it = m_VeboxSfcFeatureHandlers.begin();
         for (; it != m_VeboxSfcFeatureHandlers.end(); ++it)
@@ -717,6 +920,17 @@ MOS_STATUS Policy::BuildExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
             }
         }
     }
+    else if (caps.bRender)
+    {
+        params.Type = EngineTypeRender;
+        params.vpExecuteCaps = caps;
+
+        auto it = m_RenderFeatureHandlers.begin();
+        for (; it != m_RenderFeatureHandlers.end(); ++it)
+        {
+
+        }
+    }
 
     return MOS_STATUS_SUCCESS;
 }
@@ -731,12 +945,10 @@ MOS_STATUS Policy::SetupExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
     SwFilter* feature = nullptr;
     VP_SURFACE* surfInput = nullptr;
     VP_SURFACE* surfOutput = nullptr;
-    VP_EngineEntry *engineCaps;
+    VP_EngineEntry *engineCaps = nullptr;
 
     // only process Primary surface
     VP_PUBLIC_CHK_NULL_RETURN(inputPipe);
-
-    MOS_ZeroMemory(&engineCaps, sizeof(VP_EngineEntry));
 
     if (caps.value)
     {
@@ -772,12 +984,19 @@ MOS_STATUS Policy::SetupExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
                     }
                     /* Place Holder: need to add FurtherProcessNeeded conditions in next step*/
                     // Choose SFC as execution engine
-                    UpdateExeCaps(feature, caps, engineCaps->SfcNeeded ? EngineTypeSfc : EngineTypeVebox);
+                    UpdateExeCaps(feature, caps, engineCaps->SfcNeeded ? EngineTypeVeboxSfc : EngineTypeVebox);
                     featurePipe.RemoveSwFilter(feature);
                     params.executedFilters->AddSwFilterUnordered(feature, true, 0);
+
+                    //Create and Add CSC filter for VEBOX IECP chromasiting config
+                    if (caps.bIECP && filterID == FeatureTypeCsc)
+                    {
+                        AddNewFilterOnVebox(featurePipe, caps, params, FeatureTypeCsc);
+                    }
                 }
                 // Vebox only cases
-                else if (caps.bVebox && engineCaps->bEnabled && engineCaps->VeboxNeeded)
+                else if (caps.bVebox && engineCaps->bEnabled &&
+                    (engineCaps->VeboxNeeded || (caps.bIECP && filterID == FeatureTypeCsc)))
                 {
                     UpdateExeCaps(feature, caps, EngineTypeVebox);
                     featurePipe.RemoveSwFilter(feature);
@@ -787,12 +1006,23 @@ MOS_STATUS Policy::SetupExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
                 {
                     // use render path to implement feature.
                     UpdateExeCaps(feature, caps, EngineTypeRender);
+                    if (caps.bIECP && filterID == FeatureTypeCsc)
+                    {
+                        AddNewFilterOnVebox(featurePipe, caps, params, FeatureTypeCsc);
+                    }
                 }
                 else
                 {
+                    auto handler = m_vpInterface.GetSwFilterHandler(feature->GetFeatureType());
+
+                    if (!handler)
+                    {
+                        VP_PUBLIC_ASSERTMESSAGE("no Feature Handle, Return Pipe Init Error");
+                        return MOS_STATUS_INVALID_HANDLE;
+                    }
                     // For feature which is force enabled on Sfc, just drop it if sfc not being used.
                     featurePipe.RemoveSwFilter(feature);
-                    m_vpInterface.GetSwFilterFactory().Destory(feature);
+                    handler->Destory(feature);
                     VP_PUBLIC_NORMALMESSAGE("filter missed packets generation");
                 }
             }
@@ -808,7 +1038,7 @@ MOS_STATUS Policy::SetupExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS vp::Policy::SetupFilterResource(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
+MOS_STATUS Policy::SetupFilterResource(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
 {
     VP_FUNC_CALL();
 
@@ -842,7 +1072,7 @@ MOS_STATUS vp::Policy::SetupFilterResource(SwFilterPipe& featurePipe, VP_EXECUTE
 
     if (caps.bSFC)
     {
-        // Create Vebox Resources
+        // Create Sfc Resources
         VP_PUBLIC_CHK_STATUS_RETURN(AllocateSfcExecuteResource(caps, params));
     }
 
@@ -858,7 +1088,7 @@ MOS_STATUS Policy::UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, Engin
 
     FeatureType featureType = feature->GetFeatureType();
 
-    if (Type == EngineTypeSfc)
+    if (Type == EngineTypeVeboxSfc)
     {
         switch (featureType)
         {
@@ -886,6 +1116,22 @@ MOS_STATUS Policy::UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, Engin
         case FeatureTypeDn:
             caps.bDN = 1;
             feature->SetFeatureType(FeatureType(FEATURE_TYPE_EXECUTE(Dn, Vebox)));
+            break;
+        case FeatureTypeSte:
+            caps.bSTE = 1;
+            feature->SetFeatureType(FeatureType(FEATURE_TYPE_EXECUTE(Ste, Vebox)));
+            break;
+        case FeatureTypeAce:
+            caps.bACE = 1;
+            feature->SetFeatureType(FeatureType(FEATURE_TYPE_EXECUTE(Ace, Vebox)));
+            break;
+        case FeatureTypeTcc:
+            caps.bTCC = 1;
+            feature->SetFeatureType(FeatureType(FEATURE_TYPE_EXECUTE(Tcc, Vebox)));
+            break;
+        case FeatureTypeProcamp:
+            caps.bProcamp = 1;
+            feature->SetFeatureType(FeatureType(FEATURE_TYPE_EXECUTE(Procamp, Vebox)));
             break;
         case FeatureTypeCsc:
             caps.bBeCSC = 1;
@@ -917,7 +1163,7 @@ MOS_STATUS Policy::UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, Engin
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS vp::Policy::AllocateVeboxExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
+MOS_STATUS Policy::AllocateVeboxExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
 {
     VP_FUNC_CALL();
 
@@ -960,15 +1206,52 @@ MOS_STATUS vp::Policy::AllocateVeboxExecuteResource(VP_EXECUTE_CAPS& caps, HW_FI
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS vp::Policy::AllocateSfcExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
+MOS_STATUS Policy::AllocateSfcExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
 {
     VP_FUNC_CALL();
 
     return MOS_STATUS_SUCCESS;
 }
 
+bool Policy::IsVeboxSecurePathEnabled(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps)
+{
+    VP_FUNC_CALL();
+
+
+    if (m_vpInterface.GetHwInterface())
+    {
+        VP_PUBLIC_ASSERTMESSAGE("No VP Interface Available");
+        return false;
+    }
+
+    if (m_vpInterface.GetHwInterface()->m_osInterface &&
+        m_vpInterface.GetHwInterface()->m_osInterface->osCpInterface)
+    {
+        VP_PUBLIC_ASSERTMESSAGE("No CP Interface Available");
+        return false;
+    }
+
+    MosCpInterface* cpInterface = (m_vpInterface.GetHwInterface()->m_osInterface->osCpInterface);
+
+    // Place holder: DDI can also have conditions for Kernel resource using
+    if (!featurePipe.GetSecureProcessFlag() && caps.bVebox && cpInterface->IsHMEnabled())
+    {
+        featurePipe.SetSecureProcessFlag(true);
+        return true;
+    }
+
+    return false;
+}
+
+MOS_STATUS Policy::BuildVeboxSecureFilters(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params)
+{
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS Policy::ReleaseHwFilterParam(HW_FILTER_PARAMS &params)
 {
+    VP_FUNC_CALL();
+
     if (EngineTypeInvalid == params.Type || params.Params.empty())
     {
         params.Type = EngineTypeInvalid;
@@ -985,7 +1268,7 @@ MOS_STATUS Policy::ReleaseHwFilterParam(HW_FILTER_PARAMS &params)
     }
 
     std::map<FeatureType, PolicyFeatureHandler*> &featureHandler = 
-            (EngineTypeVebox == params.Type || EngineTypeSfc == params.Type) ? m_VeboxSfcFeatureHandlers : m_RenderFeatureHandlers;
+            (EngineTypeVebox == params.Type || EngineTypeVeboxSfc == params.Type) ? m_VeboxSfcFeatureHandlers : m_RenderFeatureHandlers;
 
     params.Type = EngineTypeInvalid;
     while (!params.Params.empty())
@@ -1009,4 +1292,66 @@ MOS_STATUS Policy::ReleaseHwFilterParam(HW_FILTER_PARAMS &params)
     m_vpInterface.GetSwFilterPipeFactory().Destory(params.executedFilters);
 
     return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS Policy::AddNewFilterOnVebox(
+    SwFilterPipe& featurePipe,
+    VP_EXECUTE_CAPS& caps,
+    HW_FILTER_PARAMS& params,
+    FeatureType featureType)
+{
+    PVP_SURFACE pSurfInput = featurePipe.GetSurface(true, 0);
+    VP_PUBLIC_CHK_NULL_RETURN(pSurfInput);
+
+    auto handler = m_vpInterface.GetSwFilterHandler(featureType);
+
+    if (!handler)
+    {
+        VP_PUBLIC_ASSERTMESSAGE("no Feature Handle, Return Pipe Init Error");
+        return MOS_STATUS_INVALID_HANDLE;
+    }
+
+    SwFilter* pSwfilter = handler->CreateSwFilter();
+    VP_PUBLIC_CHK_NULL_RETURN(pSwfilter);
+
+    MOS_STATUS status = pSwfilter->Configure(pSurfInput, caps);
+    if (MOS_FAILED(status))
+    {
+        handler->Destory(pSwfilter);
+        VP_PUBLIC_CHK_STATUS_RETURN(status);
+    }
+
+    FeatureType featureOnVebox = FeatureTypeInvalid;
+    switch (featureType)
+    {
+    case FeatureTypeDn:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Dn, Vebox);
+        break;
+    case FeatureTypeSte:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Ste, Vebox);
+        break;
+    case FeatureTypeAce:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Ace, Vebox);
+        break;
+    case FeatureTypeTcc:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Tcc, Vebox);
+        break;
+    case FeatureTypeProcamp:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Procamp, Vebox);
+        break;
+    case FeatureTypeCsc:
+        featureOnVebox = FEATURE_TYPE_EXECUTE(Csc, Vebox);
+        break;
+    default:
+        featureOnVebox = FeatureTypeInvalid;
+        break;
+    }
+
+    status = pSwfilter->SetFeatureType(featureOnVebox);
+    VP_PUBLIC_CHK_STATUS_RETURN(status);
+
+    status = params.executedFilters->AddSwFilterUnordered(pSwfilter, true, 0);
+    VP_PUBLIC_CHK_STATUS_RETURN(status);
+
+    return status;
 }

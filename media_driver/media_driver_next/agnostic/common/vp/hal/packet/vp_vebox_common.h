@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -230,19 +230,38 @@ class VpVeboxRenderData
 public:
     virtual ~VpVeboxRenderData()
     {
+        if (pAceCacheData)
+        {
+            MOS_FreeMemAndSetNull(pAceCacheData);
+        }
     }
     virtual MOS_STATUS Init()
     {
-        bUseKernelUpdate        = false;
-        bVeboxStateCopyNeeded   = false;
-        PerfTag                 = VPHAL_NONE;
+        MHW_ACE_PARAMS aceParams = {};
+        bUseKernelUpdate         = false;
+        bVeboxStateCopyNeeded    = false;
+        PerfTag                  = VPHAL_NONE;
 
-        DN.value                = 0;
-        DI.value                = 0;
-        IECP.ACE.value          = 0;
-        IECP.LACE.value         = 0;
+        DN.value                 = 0;
+        DI.value                 = 0;
+        IECP.STE.value           = 0;
+        IECP.ACE.value           = 0;
+        IECP.TCC.value           = 0;
+        IECP.PROCAMP.value       = 0;
+        IECP.LACE.value          = 0;
 
-        MOS_ZeroMemory(&m_veboxDNDIParams, sizeof(m_veboxDNDIParams));
+        VP_PUBLIC_CHK_STATUS_RETURN(MOS_SecureMemcpy(&aceParams,
+                sizeof(MHW_ACE_PARAMS),
+                &m_veboxIecpParams.AceParams,
+                sizeof(MHW_ACE_PARAMS)));
+
+        MOS_ZeroMemory(&m_veboxDNDIParams, sizeof(MHW_VEBOX_DNDI_PARAMS));
+        MOS_ZeroMemory(&m_veboxIecpParams, sizeof(MHW_VEBOX_IECP_PARAMS));
+
+        VP_PUBLIC_CHK_STATUS_RETURN(MOS_SecureMemcpy(&m_veboxIecpParams.AceParams,
+                sizeof(MHW_ACE_PARAMS),
+                &aceParams,
+                sizeof(MHW_ACE_PARAMS)));
 
         return MOS_STATUS_SUCCESS;
     }
@@ -293,6 +312,33 @@ public:
         {
             struct
             {
+                uint32_t bProcampEnabled : 1;              // STE enabled;
+            };
+            uint32_t value = 0;
+        } PROCAMP;
+
+        union
+        {
+            struct
+            {
+                uint32_t bSteEnabled : 1;              // STE enabled;
+            };
+            uint32_t value = 0;
+        } STE;
+
+        union
+        {
+            struct
+            {
+                uint32_t bTccEnabled : 1;              // TCC enabled;
+            };
+            uint32_t value = 0;
+        } TCC;
+
+        union
+        {
+            struct
+            {
                 uint32_t bAceEnabled            : 1;    // ACE enabled;
                 uint32_t bQueryAceHistogram     : 1;    // Chroma Dn Enabled
             };
@@ -319,17 +365,19 @@ public:
 
         bool IsIecpEnabled()
         {
-            return ACE.bAceEnabled || LACE.bLaceEnabled || BeCSC.bBeCSCEnabled;
+            return ACE.bAceEnabled || LACE.bLaceEnabled ||
+                    BeCSC.bBeCSCEnabled || TCC.bTccEnabled ||
+                    STE.bSteEnabled || PROCAMP.bProcampEnabled;
         }
     } IECP;
-
-
 
     bool bUseKernelUpdate = false;
     bool bVeboxStateCopyNeeded = false;
 
     // Perf
     VPHAL_PERFTAG                       PerfTag = VPHAL_NONE;
+
+    uint32_t *pAceCacheData  = nullptr;
 
 protected:
     MHW_VEBOX_DNDI_PARAMS   m_veboxDNDIParams = {};

@@ -345,15 +345,16 @@ void GpuContextSpecificNext::Clear()
     MOS_OS_FUNCTION_ENTER;
 
     // hanlde the status buf bundled w/ the specified gpucontext
-    if (m_statusBufferResource)
+    if (m_statusBufferResource && m_statusBufferResource->pGfxResourceNext)
     {
-        if (m_statusBufferResource->Unlock(m_osContext) != MOS_STATUS_SUCCESS)
+        if (m_statusBufferResource->pGfxResourceNext->Unlock(m_osContext) != MOS_STATUS_SUCCESS)
         {
             MOS_OS_ASSERTMESSAGE("failed to unlock the status buf bundled w/ the specified gpucontext");
         }
-        m_statusBufferResource->Free(m_osContext, 0);
-        MOS_Delete(m_statusBufferResource);
+        m_statusBufferResource->pGfxResourceNext->Free(m_osContext, 0);
+        MOS_Delete(m_statusBufferResource->pGfxResourceNext);
     }
+    MOS_FreeMemAndSetNull(m_statusBufferResource);
 
     MosUtilities::MosLockMutex(m_cmdBufPoolMutex);
 
@@ -864,6 +865,8 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
 {
     MOS_OS_FUNCTION_ENTER;
 
+    MOS_TraceEventExt(EVENT_MOS_BATCH_SUBMIT, EVENT_TYPE_START, nullptr, 0, nullptr, 0);
+
     MOS_OS_CHK_NULL_RETURN(streamState);
     auto perStreamParameters = (PMOS_CONTEXT)streamState->perStreamParameters;
     MOS_OS_CHK_NULL_RETURN(perStreamParameters);
@@ -997,6 +1000,12 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
             skipSyncBoList.push_back(alloc_bo);
         }
 
+        MOS_TraceEventExt(EVENT_MOS_BATCH_SUBMIT, EVENT_TYPE_INFO,
+                            &alloc_bo->handle,
+                            sizeof(alloc_bo->handle),
+                            &currentPatch->uiWriteOperation,
+                            sizeof(currentPatch->uiWriteOperation));
+
         // This call will patch the command buffer with the offsets of the indirect state region of the command buffer
         ret = mos_bo_emit_reloc2(
             tempCmdBo,                                                         // Command buffer
@@ -1022,15 +1031,36 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
     }
     mappedResList.clear();
 
-    //Add Batch buffer End Command
-    uint32_t batchBufferEndCmd = MI_BATCHBUFFER_END;
-    if (MOS_FAILED(Mos_AddCommand(
-            cmdBuffer,
-            &batchBufferEndCmd,
-            sizeof(uint32_t))))
+    if (scalaEnabled)
     {
-        MOS_OS_ASSERTMESSAGE("Inserting BB_END failed!");
-        return MOS_STATUS_UNKNOWN;
+         it = m_secondaryCmdBufs.begin();
+         while(it != m_secondaryCmdBufs.end())
+         {
+             //Add Batch buffer End Command
+             uint32_t batchBufferEndCmd = MI_BATCHBUFFER_END;
+             if (MOS_FAILED(Mos_AddCommand(
+                     it->second,
+                     &batchBufferEndCmd,
+                     sizeof(uint32_t))))
+             {
+                 MOS_OS_ASSERTMESSAGE("Inserting BB_END failed!");
+                 return MOS_STATUS_UNKNOWN;
+             }
+             it++;
+         }
+    }
+    else
+    {
+        //Add Batch buffer End Command
+        uint32_t batchBufferEndCmd = MI_BATCHBUFFER_END;
+        if (MOS_FAILED(Mos_AddCommand(
+                cmdBuffer,
+                &batchBufferEndCmd,
+                sizeof(uint32_t))))
+        {
+            MOS_OS_ASSERTMESSAGE("Inserting BB_END failed!");
+            return MOS_STATUS_UNKNOWN;
+        }
     }
 
     // Now, we can unmap the video command buffer, since we don't need CPU access anymore.
@@ -1088,6 +1118,10 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
                 MOS_OS_ASSERTMESSAGE("Invalid gpuNode.");
             }
         }
+        else
+        {
+            execFlag = I915_EXEC_BSD | I915_EXEC_BSD_RING1;
+        }
     }
 
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -1135,8 +1169,12 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
                     {
                         if (it->second->iSubmissionType & SUBMISSION_TYPE_MULTI_PIPE_SLAVE)
                         {
-                            it->second->iSubmissionType |= (secondaryIndex << SUBMISSION_TYPE_MULTI_PIPE_SLAVE_INDEX_SHIFT);
-                            secondaryIndex++;
+                            if(execFlag == MOS_GPU_NODE_VE)
+                            {
+                                // decode excluded since init in other place
+                                it->second->iSubmissionType |= (secondaryIndex << SUBMISSION_TYPE_MULTI_PIPE_SLAVE_INDEX_SHIFT);
+                                secondaryIndex++;
+                            }
                         }
                         ret = SubmitPipeCommands(it->second,
                                                  it->second->OsResource.bo,
@@ -1247,6 +1285,7 @@ if (streamState->dumpCommandBuffer)
 
     MosUtilities::MosZeroMemory(m_writeModeList, sizeof(bool) * m_maxNumAllocations);
 finish:
+    MOS_TraceEventExt(EVENT_MOS_BATCH_SUBMIT, EVENT_TYPE_END, &eStatus, sizeof(eStatus), nullptr, 0);
     return eStatus;
 }
 
@@ -1374,6 +1413,9 @@ MOS_STATUS GpuContextSpecificNext::AllocateGPUStatusBuf()
 {
     MOS_OS_FUNCTION_ENTER;
 
+    m_statusBufferResource = (PMOS_RESOURCE)MOS_AllocAndZeroMemory(sizeof(MOS_RESOURCE));
+    MOS_OS_CHK_NULL_RETURN(m_statusBufferResource);
+
     GraphicsResourceNext::CreateParams params;
     params.m_tileType  = MOS_TILE_LINEAR;
     params.m_type      = MOS_GFXRES_BUFFER;
@@ -1400,6 +1442,8 @@ MOS_STATUS GpuContextSpecificNext::AllocateGPUStatusBuf()
         return MOS_STATUS_UNKNOWN;
     }
 
-    m_statusBufferResource = graphicsResource;
+    MOS_STATUS eStatus = graphicsResource->ConvertToMosResource(m_statusBufferResource);
+    MOS_OS_CHK_STATUS_RETURN(eStatus);
+
     return MOS_STATUS_SUCCESS;
 }

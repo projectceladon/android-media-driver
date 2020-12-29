@@ -46,10 +46,22 @@ static MOS_STATUS CodecHalDecodeScalability_CalculateScdryCmdBufIndex_G12(
 
     CODECHAL_DECODE_CHK_NULL(pScalabilityStateBase);
     CODECHAL_DECODE_CHK_NULL(pdwBufIdxPlus1);
+    CODECHAL_DECODE_CHK_NULL(pScalabilityStateBase->pHwInterface);
+    CODECHAL_DECODE_CHK_NULL(pScalabilityStateBase->pHwInterface->GetOsInterface());
 
     if (pScalabilityState->HcpDecPhase == CODECHAL_HCP_DECODE_PHASE_REAL_TILE)
     {
         *pdwBufIdxPlus1 = pScalabilityState->u8RtCurPipe + 1;
+        if(pScalabilityStateBase->pHwInterface->GetOsInterface()->phasedSubmission)
+        {
+            /*  3 tiles 2 pipe for example:
+                cur phase               cur pip
+                0                       0, 1                2 cmd buffer needed
+                1                       0                   1 cmd buffer needed
+                all of 3 tiles cmd ready, submit 3 cmd togather
+             */
+            *pdwBufIdxPlus1 += (pScalabilityState->u8RtCurPhase * pScalabilityState->u8RtPhaseNum);
+        }
     }
     else
     {
@@ -609,6 +621,7 @@ MOS_STATUS CodecHalDecodeScalability_DbgDumpCmdBuffer_G12(
     MOS_STATUS                      eStatus = MOS_STATUS_SUCCESS;
     MOS_COMMAND_BUFFER              ScdryCmdBuffer;
     PMOS_COMMAND_BUFFER             pCmdBufferInUse;
+    std::string                     cmdName = "DEC";
 
     CODECHAL_DECODE_FUNCTION_ENTER;
 
@@ -630,6 +643,10 @@ MOS_STATUS CodecHalDecodeScalability_DbgDumpCmdBuffer_G12(
     }
     else
     {
+        //calculate bufidx for getting secondary cmd buffer.
+        uint32_t dwBufIdxPlus1 = 0;
+        CODECHAL_DECODE_CHK_STATUS(CodecHalDecodeScalability_CalculateScdryCmdBufIndex_G12(pScalabilityState, &dwBufIdxPlus1));
+        cmdName = cmdName + "_secondary_" + std::to_string(dwBufIdxPlus1);
         CODECHAL_DECODE_CHK_STATUS(CodecHalDecodeScalability_GetVESecondaryCmdBuffer_G12(pScalabilityState, &ScdryCmdBuffer));
         pCmdBufferInUse = &ScdryCmdBuffer;
     }
@@ -637,7 +654,7 @@ MOS_STATUS CodecHalDecodeScalability_DbgDumpCmdBuffer_G12(
     CODECHAL_DECODE_CHK_STATUS_RETURN(debugInterface->DumpCmdBuffer(
         pCmdBufferInUse,
         CODECHAL_NUM_MEDIA_STATES,
-        "DEC"));
+        cmdName.c_str()));
 
 finish:
     return eStatus;
@@ -926,14 +943,16 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState_G12(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_MODE_SWITCH_THRESHOLD1_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dwHcpDecModeSwtichTh1Width = UserFeatureData.u32Data;
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_MODE_SWITCH_THRESHOLD2_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dwHcpDecModeSwtichTh2Width = UserFeatureData.u32Data;
 
     // Reg key to control hevc real tile decoding
@@ -941,7 +960,8 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState_G12(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DISABLE_HEVC_REALTILE_DECODE_ID_G12,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->bDisableRtMode = (UserFeatureData.u32Data != 0);
 
     // Reg key to control hevc real tile multi-phase decoding
@@ -949,21 +969,24 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState_G12(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENABLE_HEVC_REALTILE_MULTI_PHASE_DECODE_ID_G12,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->bEnableRtMultiPhase = (UserFeatureData.u32Data != 0);
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_SCALABILITY_OVERRIDE_SPLIT_WIDTH_IN_MINCB,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dbgOvrdWidthInMinCb = UserFeatureData.u32Data;
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_USER_PIPE_NUM_ID_G12,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->dbgOverUserPipeNum = (uint8_t)UserFeatureData.u32Data;
 #endif
 
@@ -1044,7 +1067,8 @@ MOS_STATUS CodecHalDecodeScalability_InitializeState_G12(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HCP_DECODE_ALWAYS_FRAME_SPLIT_ID,
-        &UserFeatureData);
+        &UserFeatureData,
+        osInterface->pOsContext);
     pScalabilityState->bAlwaysFrameSplit = UserFeatureData.u32Data ? true : false;
 #endif
 
@@ -1092,6 +1116,7 @@ MOS_STATUS CodecHalDecodeScalability_AdvanceRealTilePass(
 
     CODECHAL_DECODE_CHK_NULL_RETURN(pScalabilityStateBase);
     CODECHAL_DECODE_ASSERT(pScalabilityState->bIsRtMode);
+    CODECHAL_DECODE_ASSERT(pScalabilityState->u8RtCurPhase < pScalabilityState->u8RtPhaseNum);
 
     pScalabilityState->u8RtCurPipe++;
     if (pScalabilityState->u8RtCurPipe >= pScalabilityState->ucScalablePipeNum)
@@ -1099,8 +1124,6 @@ MOS_STATUS CodecHalDecodeScalability_AdvanceRealTilePass(
         pScalabilityState->u8RtCurPipe = 0;
         pScalabilityState->u8RtCurPhase++;
     }
-
-    CODECHAL_DECODE_ASSERT(pScalabilityState->u8RtCurPhase < pScalabilityState->u8RtPhaseNum);
 
     return eStatus;
 }
@@ -1542,25 +1565,36 @@ MOS_STATUS CodecHalDecodeScalability_DecidePipeNum_G12(
     CODECHAL_DECODE_CHK_NULL_RETURN(pScalState);
     CODECHAL_DECODE_CHK_NULL_RETURN(pScalState->pVEInterface);
     CODECHAL_DECODE_CHK_NULL_RETURN(pInitParams);
+    CODECHAL_DECODE_CHK_NULL_RETURN(pScalState->pHwInterface);
+    CODECHAL_DECODE_CHK_NULL_RETURN(pScalState->pHwInterface->GetOsInterface());
 
     pVEInterface                                                     = pScalState->pVEInterface;
     pScalState->ucScalablePipeNum                                    = CODECHAL_DECODE_HCP_Legacy_PIPE_NUM_1;
     PCODECHAL_DECODE_SCALABILITY_STATE_G12       pScalStateG12        = static_cast<PCODECHAL_DECODE_SCALABILITY_STATE_G12>(pScalState);
     PCODECHAL_DECODE_SCALABILITY_INIT_PARAMS_G12 pInitParamsG12       = static_cast<PCODECHAL_DECODE_SCALABILITY_INIT_PARAMS_G12>(pInitParams);
-    uint8_t                                     u8MaxTileColumn      = HEVC_NUM_MAX_TILE_COLUMN;
-    bool                                        bCanEnableRealTile   = true;
+
+    uint8_t                                      u8MaxTileColumn      = HEVC_NUM_MAX_TILE_COLUMN;
+    bool                                         bCanEnableRealTile   = true;
+    bool                                         bCanEnableScalability = !pScalState->pHwInterface->IsDisableScalability();
+    PMOS_INTERFACE pOsInterface                                      = pScalState->pHwInterface->GetOsInterface();
+
 #if (_DEBUG || _RELEASE_INTERNAL)
     bCanEnableRealTile = !(static_cast<PCODECHAL_DECODE_SCALABILITY_STATE_G12>(pScalState))->bDisableRtMode;
     if (!pScalStateG12->bEnableRtMultiPhase)
         u8MaxTileColumn = 2;
+    if(!bCanEnableScalability
+        && pOsInterface
+        && (pOsInterface->bHcpDecScalabilityMode == MOS_SCALABILITY_ENABLE_MODE_USER_FORCE))
+    {
+        bCanEnableScalability = true;
+    }
 #endif
     bCanEnableRealTile = bCanEnableRealTile && pInitParamsG12->bIsTileEnabled && (pInitParams->u8NumTileColumns > 1) &&
                          (pInitParams->u8NumTileColumns <= u8MaxTileColumn) && (pInitParams->u8NumTileRows <= HEVC_NUM_MAX_TILE_ROW) &&
                          pInitParamsG12->bHasSubsetParams;
 
-    if (pInitParams->usingSFC)
+    if (pInitParams->usingSFC || !bCanEnableScalability)
     {
-        //using SFC can only work in single pipe mode.
         return MOS_STATUS_SUCCESS;
     }
 
@@ -1602,7 +1636,7 @@ MOS_STATUS CodecHalDecodeScalability_DecidePipeNum_G12(
                                     && CodechalDecodeResolutionEqualLargerThan4k(pInitParams->u32PicWidthInPixel, pInitParams->u32PicHeightInPixel))
                                 || (CodechalDecodeNonRextFormat(pInitParams->format)
                                     && CodechalDecodeResolutionEqualLargerThan5k(pInitParams->u32PicWidthInPixel, pInitParams->u32PicHeightInPixel))
-                                || (bCanEnableRealTile && !pInitParams->usingSecureDecode))
+                                || (bCanEnableRealTile && !pOsInterface->osCpInterface->IsCpEnabled()))
                 {
                     pScalState->ucScalablePipeNum = CODECHAL_DECODE_HCP_SCALABLE_PIPE_NUM_2;
                 }

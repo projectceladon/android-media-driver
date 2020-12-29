@@ -279,13 +279,14 @@ VAStatus MediaLibvaCapsG11::GetPlatformSpecificAttrib(VAProfile profile,
     {
         case VAConfigAttribEncMaxRefFrames:
         {
-            if (entrypoint == VAEntrypointEncSliceLP || !IsHevcProfile(profile))
+            // just VAConfigAttribEncMaxRefFrames of HEVC VME is different with platforms
+            if (entrypoint == VAEntrypointEncSlice && IsHevcProfile(profile))
             {
-                status = VA_STATUS_ERROR_INVALID_PARAMETER;
+                *value = ENCODE_DP_HEVC_NUM_MAX_VME_L0_REF_G11 | (ENCODE_DP_HEVC_NUM_MAX_VME_L1_REF_G11 << 16);;
             }
             else
             {
-                *value = ENCODE_DP_HEVC_NUM_MAX_VME_L0_REF_G11 | (ENCODE_DP_HEVC_NUM_MAX_VME_L1_REF_G11 << 16);;
+                status = VA_STATUS_ERROR_INVALID_PARAMETER;
             }
             break;
         }
@@ -394,6 +395,14 @@ VAStatus MediaLibvaCapsG11::GetPlatformSpecificAttrib(VAProfile profile,
             else
             {
                 *value = CODEC_MAX_PIC_HEIGHT;
+            }
+            break;
+        }
+        case VAConfigAttribPredictionDirection:
+        {
+            if(IsHevcProfile(profile) && (entrypoint == VAEntrypointEncSliceLP))
+            {
+                *value = VA_PREDICTION_DIRECTION_PREVIOUS | VA_PREDICTION_DIRECTION_BI_NOT_EMPTY;
             }
             break;
         }
@@ -819,9 +828,15 @@ GMM_RESOURCE_FORMAT MediaLibvaCapsG11::ConvertMediaFmtToGmmFmt(
         case Media_Format_R10G10B10X2: return GMM_FORMAT_R10G10B10A2_UNORM_TYPE;
         case Media_Format_B10G10R10X2: return GMM_FORMAT_B10G10R10A2_UNORM_TYPE;
         case Media_Format_Y210       : return GMM_FORMAT_Y210_TYPE;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case Media_Format_Y212       : return GMM_FORMAT_Y216_TYPE;
+#endif
         case Media_Format_Y216       : return GMM_FORMAT_Y216_TYPE;
         case Media_Format_AYUV       : return GMM_FORMAT_AYUV_TYPE;
         case Media_Format_Y410       : return GMM_FORMAT_Y410_TYPE;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case Media_Format_Y412       : return GMM_FORMAT_Y416_TYPE;
+#endif
         case Media_Format_Y416       : return GMM_FORMAT_Y416_TYPE;
         default                      : return GMM_FORMAT_INVALID;
     }
@@ -970,10 +985,24 @@ VAStatus MediaLibvaCapsG11::QuerySurfaceAttributes(
         else if(profile == VAProfileHEVCMain422_12)
         {
             //hevc  rext: Y216 12/16bit 422
+#if VA_CHECK_VERSION(1, 9, 0)
+            attribs[i].type = VASurfaceAttribPixelFormat;
+            attribs[i].value.type = VAGenericValueTypeInteger;
+            attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+            attribs[i].value.value.i = VA_FOURCC_Y212;
+            i++;
+#endif
+
             attribs[i].type = VASurfaceAttribPixelFormat;
             attribs[i].value.type = VAGenericValueTypeInteger;
             attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
             attribs[i].value.value.i = VA_FOURCC_Y216;
+            i++;
+
+            attribs[i].type = VASurfaceAttribPixelFormat;
+            attribs[i].value.type = VAGenericValueTypeInteger;
+            attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+            attribs[i].value.value.i = VA_FOURCC_P012;
             i++;
         }
         else if(profile == VAProfileHEVCMain444 || profile == VAProfileVP9Profile1)
@@ -994,6 +1023,14 @@ VAStatus MediaLibvaCapsG11::QuerySurfaceAttributes(
 
             if(profile == VAProfileVP9Profile3)
             {
+#if VA_CHECK_VERSION(1, 9, 0)
+                attribs[i].type = VASurfaceAttribPixelFormat;
+                attribs[i].value.type = VAGenericValueTypeInteger;
+                attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+                attribs[i].value.value.i = VA_FOURCC_Y412;
+                i++;
+#endif
+
                 attribs[i].type = VASurfaceAttribPixelFormat;
                 attribs[i].value.type = VAGenericValueTypeInteger;
                 attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
@@ -1003,10 +1040,30 @@ VAStatus MediaLibvaCapsG11::QuerySurfaceAttributes(
         }
         else if(profile == VAProfileHEVCMain444_12)
         {
+#if VA_CHECK_VERSION(1, 9, 0)
+            attribs[i].type = VASurfaceAttribPixelFormat;
+            attribs[i].value.type = VAGenericValueTypeInteger;
+            attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+            attribs[i].value.value.i = VA_FOURCC_Y412;
+            i++;
+
+            attribs[i].type = VASurfaceAttribPixelFormat;
+            attribs[i].value.type = VAGenericValueTypeInteger;
+            attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+            attribs[i].value.value.i = VA_FOURCC_Y212;
+            i++;
+#endif
+
             attribs[i].type = VASurfaceAttribPixelFormat;
             attribs[i].value.type = VAGenericValueTypeInteger;
             attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
             attribs[i].value.value.i = VA_FOURCC_Y416;
+            i++;
+
+            attribs[i].type = VASurfaceAttribPixelFormat;
+            attribs[i].value.type = VAGenericValueTypeInteger;
+            attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+            attribs[i].value.value.i = VA_FOURCC_P012;
             i++;
         }
         else if (profile == VAProfileJPEGBaseline)

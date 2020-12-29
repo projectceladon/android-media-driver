@@ -62,6 +62,25 @@ bool MediaScalability::IsScalabilityModeMatched(ScalabilityPars *params)
 
     return isMatched;
 }
+
+bool MediaScalability::IsScalabilityModeMatched(MediaScalabilityOption &scalabOption)
+{
+#if (_DEBUG || _RELEASE_INTERNAL)
+    if (m_osInterface == nullptr)
+    {
+        return false;
+    }
+    if (m_osInterface->bEnableDbgOvrdInVE)
+    {
+        return true;
+    }
+    else
+#endif
+    {
+        return m_scalabilityOption->IsScalabilityOptionMatched(scalabOption);
+    }
+}
+
 bool MediaScalability::IsGpuCtxCreateOptionMatched(PMOS_GPUCTX_CREATOPTIONS_ENHANCED gpuCtxCreateOption1, PMOS_GPUCTX_CREATOPTIONS_ENHANCED gpuCtxCreateOption2)
 {
     bool isMatched = false;
@@ -107,8 +126,7 @@ MOS_STATUS MediaScalability::VerifySpaceAvailable(uint32_t requestedSize, uint32
             return eStatus;
         }
 
-        requestedSize          = (statusCmdBuf != MOS_STATUS_SUCCESS) ? requestedSize + COMMAND_BUFFER_RESERVED_SPACE : 0;
-        requestedPatchListSize = (statusPatchList != MOS_STATUS_SUCCESS) ? requestedPatchListSize : 0;
+        requestedSize          = requestedSize + COMMAND_BUFFER_RESERVED_SPACE;
 
         SCALABILITY_CHK_STATUS_RETURN(ResizeCommandBufferAndPatchList(requestedSize, requestedPatchListSize));
 

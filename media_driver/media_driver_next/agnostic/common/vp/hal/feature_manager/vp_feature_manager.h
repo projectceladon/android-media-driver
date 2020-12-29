@@ -33,12 +33,11 @@
 #include "vp_utils.h"
 #include "vp_pipeline_common.h"
 #include "vp_allocator.h"
-
 #include "vp_obj_factories.h"
 
 namespace vp
 {
-
+class SwFilterFeatureHandler;
 class VpResourceManager;
 
 class VPFeatureManager : public MediaFeatureManager
@@ -48,8 +47,10 @@ public:
     //! \brief  VPFeatureManager constructor
     //! \param  [in] hwInterface
     //!         Pointer to VP_MHWINTERFACE
+    //! \param  [in] pOsInterface
+    //!         Pointer to MOS INTERFACE
     //!
-     VPFeatureManager(PVP_MHWINTERFACE hwInterface);
+    VPFeatureManager(PVP_MHWINTERFACE hwInterface);
 
     //!
     //! \brief  VPFeatureManager deconstructor
@@ -147,30 +148,45 @@ protected:
 
 protected:
     PVP_MHWINTERFACE        m_hwInterface       = nullptr;
+    PMOS_INTERFACE          m_pOsInterface      = nullptr;
 };
-
-
 
 class VpFeatureManagerNext : public MediaFeatureManager
 {
 public:
-    VpFeatureManagerNext(VpAllocator &allocator, VpResourceManager *resourceManager, PVP_MHWINTERFACE pHwInterface);
+    VpFeatureManagerNext(VpInterface& vpInterface);
     virtual ~VpFeatureManagerNext();
 
     virtual MOS_STATUS Initialize();
-    virtual MOS_STATUS InitPacketPipe(VP_PIPELINE_PARAMS &params,
-                    PacketPipe &packetPipe);
+    virtual MOS_STATUS InitPacketPipe(SwFilterPipe& swFilterPipe,
+        PacketPipe& packetPipe);
+
+    //!
+    //! \brief    Check whether VEBOX-SFC Format Supported
+    //! \details  Check whether VEBOX-SFC Format Supported.
+    //! \param    inputFormat
+    //!           [in] Format of Input Frame
+    //! \param    outputFormat
+    //!           [in] Format of Output Frame
+    //! \return   bool
+    //!           Return true if supported, otherwise failed
+    //!
+    bool IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput);
 
 protected:
-    MOS_STATUS CreateHwFilterPipe(VP_PIPELINE_PARAMS &params, HwFilterPipe *&pHwFilterPipe);
-    MOS_STATUS UpdateResources(HwFilterPipe &hwFilterPipe);
+    MOS_STATUS CreateHwFilterPipe(SwFilterPipe& swFilterPipe, HwFilterPipe*& pHwFilterPipe);
+    MOS_STATUS UpdateResources(HwFilterPipe& hwFilterPipe);
 
-    VpInterface         m_vpInterface;
-    Policy              m_Policy;
+    virtual MOS_STATUS RegisterFeatures();
+    MOS_STATUS UnregisterFeatures();
+
+    VpInterface         & m_vpInterface;
+    Policy              * m_policy = nullptr;
+    std::map<FeatureType, SwFilterFeatureHandler*> m_featureHandler;
+    uint32_t           m_isFeatureRegistered = false;
 
 private:
-    MOS_STATUS Init(void *settings) { return MOS_STATUS_UNIMPLEMENTED; }
+    MOS_STATUS Init(void* settings) { return MOS_STATUS_UNIMPLEMENTED; }
 };
-
 }
 #endif // !__VP_FEATURE_MANAGER_H__

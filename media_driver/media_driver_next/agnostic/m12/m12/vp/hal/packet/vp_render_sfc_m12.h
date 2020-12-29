@@ -36,24 +36,36 @@ namespace vp {
 
 class SfcRenderM12 : public SfcRenderBase
 {
-
 public:
-    SfcRenderM12(PMOS_INTERFACE osInterface, PMHW_SFC_INTERFACE sfcInterface, PVpAllocator &allocator);
+    SfcRenderM12(VP_MHWINTERFACE &vpMhwinterface, PVpAllocator &allocator);
     virtual     ~SfcRenderM12();
 
     //!
     //! \brief    Setup SFC states and parameters
     //! \details  Setup SFC states and parameters including M12 SFC State
-    //! \param    [in] sfcRenderData
-    //!           Pointer to SFC Render Data
     //! \param    [in] targetSurface
     //!           Pointer to Output Surface
     //! \return   Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS SetupSfcState(
-        PVPHAL_SFC_RENDER_DATA          sfcRenderData,
         PVP_SURFACE                     targetSurface);
+
+    virtual MOS_STATUS AddSfcLock(
+        PMOS_COMMAND_BUFFER            pCmdBuffer,
+        PMHW_SFC_LOCK_PARAMS           pSfcLockParams);
+protected:
+    //!
+    //! \brief    Initiazlize SFC State Parameters
+    //! \details  Initiazlize SFC State Parameters
+    //! \return   Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS InitSfcStateParams();
+
+    virtual MOS_STATUS SetSfcStateInputOrderingModeHcp(
+        PMHW_SFC_STATE_PARAMS       sfcStateParams);
+
+    virtual MOS_STATUS SetCodecPipeMode(CODECHAL_STANDARD codecStandard);
 };
 
 }
-#endif // !__VP_RENDER_SFC_BASE_H__
+#endif // !__VP_RENDER_SFC_M12_H__

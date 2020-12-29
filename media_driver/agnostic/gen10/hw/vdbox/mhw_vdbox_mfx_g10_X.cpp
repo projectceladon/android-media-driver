@@ -118,7 +118,8 @@ void MhwVdboxMfxInterfaceG10::InitRowstoreUserFeatureSettings()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ROWSTORE_CACHE_DISABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
     m_rowstoreCachingSupported = userFeatureData.i32Data ? false : true;
 
@@ -129,7 +130,8 @@ void MhwVdboxMfxInterfaceG10::InitRowstoreUserFeatureSettings()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_INTRAROWSTORECACHE_DISABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
         m_intraRowstoreCache.bSupported = userFeatureData.i32Data ? false : true;
 
@@ -138,7 +140,8 @@ void MhwVdboxMfxInterfaceG10::InitRowstoreUserFeatureSettings()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_DEBLOCKINGFILTERROWSTORECACHE_DISABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
         m_deblockingFilterRowstoreCache.bSupported = userFeatureData.i32Data ? false : true;
 
@@ -147,7 +150,8 @@ void MhwVdboxMfxInterfaceG10::InitRowstoreUserFeatureSettings()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_BSDMPCROWSTORECACHE_DISABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
         m_bsdMpcRowstoreCache.bSupported = userFeatureData.i32Data ? false : true;
 
@@ -156,7 +160,8 @@ void MhwVdboxMfxInterfaceG10::InitRowstoreUserFeatureSettings()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_MPRROWSTORECACHE_DISABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
         m_mprRowstoreCache.bSupported = userFeatureData.i32Data ? false : true;
     }
@@ -772,7 +777,7 @@ MOS_STATUS MhwVdboxMfxInterfaceG10::AddMfxPipeBufAddrCmd(
     {
         UserFeatureWriteData.Value.i32Data = 1;
     }
-    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1);
+    MOS_UserFeature_WriteValues_ID(nullptr, &UserFeatureWriteData, 1, m_osInterface->pOsContext);
 #endif
 
     // Encoding uses both surfaces regardless of deblocking status
@@ -1533,24 +1538,7 @@ MOS_STATUS MhwVdboxMfxInterfaceG10::AddMfxEncodeAvcImgCmd(
 
     if (avcSeqParams->EnableSliceLevelRateCtrl)
     {
-        uint8_t qpY = avcPicParams->QpY;
-        if (params->dwSliceThresholdTable == NO_SLICE_THRESHOLD_TABLE) // Do not use any Slice Threshold Table
-        {
-            cmd.DW19.ThresholdSizeInBytes = (avcPicParams->SliceSizeInBytes > params->dwVdencSliceMinusBytes) ?
-                (avcPicParams->SliceSizeInBytes - params->dwVdencSliceMinusBytes) : 0;
-        }
-        else if (params->dwSliceThresholdTable == USE_SLICE_THRESHOLD_TABLE_100_PERCENT) // Use 100 Percent Slice Threshold Table
-        {
-            cmd.DW19.ThresholdSizeInBytes = avcPicParams->SliceSizeInBytes -
-                MOS_MIN(avcPicParams->SliceSizeInBytes,
-                ((avcPicParams->CodingType == I_TYPE) ? m_vdEncFrameDelta100PercentTab[qpY].IFrameDelta : m_vdEncFrameDelta100PercentTab[qpY].PFrameDelta));
-        }
-        else if (params->dwSliceThresholdTable == USE_SLICE_THRESHOLD_TABLE_90_PERCENT) // Use 90 Percent Slice Threshold Table
-        {
-            cmd.DW19.ThresholdSizeInBytes = avcPicParams->SliceSizeInBytes -
-                MOS_MIN(avcPicParams->SliceSizeInBytes,
-                ((avcPicParams->CodingType == I_TYPE) ? m_vdEncFrameDelta90PercentTab[qpY].IFrameDelta : m_vdEncFrameDelta90PercentTab[qpY].PFrameDelta));
-        }
+        cmd.DW19.ThresholdSizeInBytes = avcPicParams->SliceSizeInBytes - MOS_MIN(avcPicParams->SliceSizeInBytes, params->dwVdencSliceMinusBytes);
         cmd.DW20.TargetSliceSizeInBytes = avcPicParams->SliceSizeInBytes;
     }
 

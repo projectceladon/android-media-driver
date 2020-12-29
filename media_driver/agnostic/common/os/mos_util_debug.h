@@ -32,7 +32,6 @@
 //!
 #ifndef __MOS_UTIL_DEBUG_H__
 #define __MOS_UTIL_DEBUG_H__
-
 #include "mos_defs.h"
 #include "mos_util_debug_specific.h"
 
@@ -176,13 +175,17 @@ typedef enum
 } MOS_MMC_SUBCOMP_ID;
 
 //!
-//! \brief Define BLT Sub-Component IDs
+//! \brief Define media copy Sub-Component IDs
 //!
 typedef enum
 {
-    MOS_BLT_SUBCOMP_SELF   = 0,
-    MOS_BLT_SUBCOMP_COUNT
-} MOS_BLT_SUBCOMP_ID;
+    MOS_MCPY_SUBCOMP_SELF   = 0,
+    MOS_MCPY_SUBCOMP_BLT,
+    MOS_MCPY_SUBCOMP_VEBOX,
+    MOS_MCPY_SUBCOMP_RENDER,
+    MOS_MCPY_SUBCOMP_COUNT
+} MOS_MCPY_SUBCOMP_ID;
+
 
 //!
 //! \brief MOS debug params structure, includes debug level and asserts enabled.
@@ -226,7 +229,7 @@ typedef struct _MOS_MESSAGE_PARAMS
 //!           to be called during device creation
 //! \return   void
 //!
-void MOS_MessageInit();
+void MOS_MessageInit(MOS_CONTEXT_HANDLE mosCtx);
 
 //!
 //! \brief    Frees the MOS message buffer and MOS message parameters structure
@@ -251,11 +254,13 @@ void MOS_HltpPreface(
 //! \brief    Form a string that will prefix MOS's log file name
 //! \param    char  *fileNamePrefix
 //!           [out] Pointer to the string where the prefix is returned
+//! \param    [in] mosCtx
+//!           os device ctx handle
 //! \return   MOS_STATUS
 //!           Returns one of the MOS_STATUS error codes if failed,
 //!           else MOS_STATUS_SUCCESS
 //!
-MOS_STATUS MOS_LogFileNamePrefix(char  *fileNamePrefix);
+MOS_STATUS MOS_LogFileNamePrefix(char *fileNamePrefix, MOS_CONTEXT_HANDLE mosCtx);
 
 //!
 //! \def MOS_FUNCTION_ENTER(_compID, _subCompID)

@@ -47,6 +47,7 @@
 #include "media_libva_putsurface_linux.h"
 #endif
 #include "media_libva_vp.h"
+#include "media_ddi_prot.h"
 #include "mos_os.h"
 
 #include "hwinfo_linux.h"
@@ -54,6 +55,7 @@
 #include "mos_solo_generic.h"
 #include "media_libva_caps.h"
 #include "media_interfaces_mmd.h"
+#include "media_interfaces_mcpy.h"
 #include "media_user_settings_mgr.h"
 #include "cplib_utils.h"
 #include "media_interfaces.h"
@@ -156,7 +158,6 @@ static bool DdiMedia_ReleaseSliceControlBuffer(
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
         {
             PDDI_DECODE_CONTEXT  decCtx;
 
@@ -298,7 +299,8 @@ static uint32_t DdiMedia_CreateRenderTarget(
     uint32_t                      width,
     uint32_t                      height,
     DDI_MEDIA_SURFACE_DESCRIPTOR *surfDesc,
-    uint32_t                      surfaceUsageHint
+    uint32_t                      surfaceUsageHint,
+    int                           memType
 )
 {
     DdiMediaUtil_LockMutex(&mediaDrvCtx->SurfaceMutex);
@@ -326,6 +328,7 @@ static uint32_t DdiMedia_CreateRenderTarget(
     surfaceElement->pSurface->uiLockedBufID   = VA_INVALID_ID;
     surfaceElement->pSurface->uiLockedImageID = VA_INVALID_ID;
     surfaceElement->pSurface->surfaceUsageHint= surfaceUsageHint;
+    surfaceElement->pSurface->memType         = memType;
 
     if(DdiMediaUtil_CreateSurface(surfaceElement->pSurface, mediaDrvCtx)!= VA_STATUS_SUCCESS)
     {
@@ -461,12 +464,20 @@ int32_t DdiMedia_MediaFormatToOsFormat(DDI_MEDIA_FORMAT format)
             return VA_FOURCC_P016;
         case Media_Format_Y210:
             return VA_FOURCC_Y210;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case Media_Format_Y212:
+            return VA_FOURCC_Y212;
+#endif
         case Media_Format_Y216:
             return VA_FOURCC_Y216;
         case Media_Format_AYUV:
             return VA_FOURCC_AYUV;
         case Media_Format_Y410:
             return VA_FOURCC_Y410;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case Media_Format_Y412:
+            return VA_FOURCC_Y412;
+#endif
         case Media_Format_Y416:
             return VA_FOURCC_Y416;
         case Media_Format_Y8:
@@ -588,12 +599,20 @@ DDI_MEDIA_FORMAT DdiMedia_OsFormatToMediaFormat(int32_t fourcc, int32_t rtformat
             return Media_Format_P016;
         case VA_FOURCC_Y210:
             return Media_Format_Y210;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y212:
+            return Media_Format_Y212;
+#endif
         case VA_FOURCC_Y216:
             return Media_Format_Y216;
         case VA_FOURCC_AYUV:
             return Media_Format_AYUV;
         case VA_FOURCC_Y410:
             return Media_Format_Y410;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y412:
+            return Media_Format_Y412;
+#endif
         case VA_FOURCC_Y416:
             return Media_Format_Y416;
         case VA_FOURCC_Y8:
@@ -883,6 +902,12 @@ static void DdiMedia_FreeContextHeapElements(VADriverContextP    ctx)
     if (nullptr != vpContextHeap)
         DdiMedia_FreeContextHeap(ctx,vpContextHeap,DDI_MEDIA_VACONTEXTID_OFFSET_VP,vpctxNums);
 
+    //Free ProtContext
+    PDDI_MEDIA_HEAP protContextHeap      = mediaCtx->pProtCtxHeap;
+    int32_t protCtxNums         = mediaCtx->uiNumProts;
+    if (nullptr != protContextHeap)
+        DdiMedia_FreeProtectedSessionHeap(ctx,protContextHeap,DDI_MEDIA_VACONTEXTID_OFFSET_PROT,protCtxNums);
+
     //Free MfeContext
     PDDI_MEDIA_HEAP mfeContextHeap     = mediaCtx->pMfeCtxHeap;
     int32_t mfeCtxNums        = mediaCtx->uiNumMfes;
@@ -1159,6 +1184,78 @@ void DdiMedia_MediaMemoryCopy2DInternal(PMOS_CONTEXT mosCtx, PMOS_RESOURCE input
     }
 }
 
+//!
+//! \brief  Tile/Linear format conversion for media surface/buffer
+//!
+//! \param  [in] mosCtx
+//!         Pointer to mos context
+//! \param  [in] inputOsResource
+//!         Pointer input mos resource
+//! \param  [in] outputOsResource
+//!         Pointer output mos resource
+//! \param  [in] copyWidth
+//!         The 2D surface Width
+//! \param  [in] copyHeight
+//!         The 2D surface height
+//! \param  [in] copyInputOffset
+//!         The offset of copied surface from
+//! \param  [in] copyOutputOffset
+//!         The offset of copied to
+//! \param  [in] isTileToLinear
+//!         Convertion direction, true: tile->linear, false: linear->tile
+//! \param  [in] outputCompressed
+//!         output can be compressed or not
+//!
+VAStatus DdiMedia_MediaMemoryTileConvertInternal(
+    PMOS_CONTEXT mosCtx,
+    PMOS_RESOURCE inputOsResource,
+    PMOS_RESOURCE outputOsResource,
+    uint32_t copyWidth,
+    uint32_t copyHeight,
+    uint32_t copyInputOffset,
+    uint32_t copyOutputOffset,
+    bool isTileToLinear,
+    bool outputCompressed)
+{
+    DDI_CHK_NULL(mosCtx, "nullptr mosCtx", VA_STATUS_ERROR_INVALID_PARAMETER);
+    DDI_CHK_NULL(inputOsResource, "nullptr input osResource", VA_STATUS_ERROR_INVALID_PARAMETER);
+    DDI_CHK_NULL(outputOsResource, "nullptr output osResource", VA_STATUS_ERROR_INVALID_PARAMETER);
+    DDI_ASSERT(inputOsResource);
+    DDI_ASSERT(outputOsResource);
+
+    VAStatus vaStatus = VA_STATUS_SUCCESS;
+
+    MediaMemDecompBaseState *mediaMemDecompState = static_cast<MediaMemDecompBaseState*>(*mosCtx->ppMediaMemDecompState);
+
+    if (mosCtx->m_apoMosEnabled && !mediaMemDecompState)
+    {
+        DDI_CHK_NULL(mediaMemDecompState, "nullptr mediaMemDecompState", VA_STATUS_ERROR_INVALID_PARAMETER);
+    }
+
+    if (!mediaMemDecompState)
+    {
+        mediaMemDecompState = static_cast<MediaMemDecompBaseState*>(MmdDevice::CreateFactory(mosCtx));
+        *mosCtx->ppMediaMemDecompState = mediaMemDecompState;
+    }
+
+    DDI_CHK_NULL(mediaMemDecompState, "Invalid memory decompression state", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+    MOS_STATUS mosStatus = mediaMemDecompState->MediaMemoryTileConvert(
+            inputOsResource,
+            outputOsResource,
+            copyWidth,
+            copyHeight,
+            copyInputOffset,
+            copyOutputOffset,
+            isTileToLinear,
+            outputCompressed);
+    if (mosStatus != MOS_STATUS_SUCCESS)
+    {
+        vaStatus = VA_STATUS_ERROR_UNKNOWN;
+    }
+
+    return vaStatus;
+}
 #endif
 
 //!
@@ -1222,23 +1319,26 @@ VAStatus DdiMedia_MediaMemoryDecompress(PDDI_MEDIA_CONTEXT mediaCtx, DDI_MEDIA_S
 
         if (nullptr == pCpDdiInterface)
         {
-            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+            vaStatus = VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
-
-        DdiMediaUtil_LockMutex(&mediaCtx->SurfaceMutex);
-
-        DdiMedia_MediaSurfaceToMosResource(mediaSurface, &surface);
-        DdiMedia_MediaMemoryDecompressInternal(&mosCtx, &surface);
-
-        DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
-
-        if (pCpDdiInterface)
+        else
         {
-            Delete_DdiCpInterface(pCpDdiInterface);
-            pCpDdiInterface = NULL;
+            DdiMediaUtil_LockMutex(&mediaCtx->SurfaceMutex);
+
+            DdiMedia_MediaSurfaceToMosResource(mediaSurface, &surface);
+            DdiMedia_MediaMemoryDecompressInternal(&mosCtx, &surface);
+
+            DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
+
+            if (pCpDdiInterface)
+            {
+                Delete_DdiCpInterface(pCpDdiInterface);
+                pCpDdiInterface = NULL;
+            }
         }
 #else
         vaStatus = VA_STATUS_ERROR_INVALID_SURFACE;
+        DDI_ASSERTMESSAGE("MMC unsupported! [%d].", vaStatus);
 #endif
     }
 
@@ -1291,6 +1391,10 @@ static VAStatus DdiMedia_HeapInitialize(
     DDI_CHK_NULL(mediaCtx->pVpCtxHeap, "nullptr VpCtxHeap", VA_STATUS_ERROR_ALLOCATION_FAILED);
     mediaCtx->pVpCtxHeap->uiHeapElementSize = sizeof(DDI_MEDIA_VACONTEXT_HEAP_ELEMENT);
 
+    mediaCtx->pProtCtxHeap = (DDI_MEDIA_HEAP *)MOS_AllocAndZeroMemory(sizeof(DDI_MEDIA_HEAP));
+    DDI_CHK_NULL(mediaCtx->pProtCtxHeap, "nullptr pProtCtxHeap", VA_STATUS_ERROR_ALLOCATION_FAILED);
+    mediaCtx->pProtCtxHeap->uiHeapElementSize = sizeof(DDI_MEDIA_VACONTEXT_HEAP_ELEMENT);
+
     mediaCtx->pCmCtxHeap = (DDI_MEDIA_HEAP *)MOS_AllocAndZeroMemory(sizeof(DDI_MEDIA_HEAP));
     DDI_CHK_NULL(mediaCtx->pCmCtxHeap, "nullptr CmCtxHeap", VA_STATUS_ERROR_ALLOCATION_FAILED);
     mediaCtx->pCmCtxHeap->uiHeapElementSize = sizeof(DDI_MEDIA_VACONTEXT_HEAP_ELEMENT);
@@ -1306,6 +1410,7 @@ static VAStatus DdiMedia_HeapInitialize(
     DdiMediaUtil_InitMutex(&mediaCtx->DecoderMutex);
     DdiMediaUtil_InitMutex(&mediaCtx->EncoderMutex);
     DdiMediaUtil_InitMutex(&mediaCtx->VpMutex);
+    DdiMediaUtil_InitMutex(&mediaCtx->ProtMutex);
     DdiMediaUtil_InitMutex(&mediaCtx->CmMutex);
     DdiMediaUtil_InitMutex(&mediaCtx->MfeMutex);
 
@@ -1344,6 +1449,9 @@ static VAStatus DdiMedia_HeapDestroy(
     MOS_FreeMemory(mediaCtx->pVpCtxHeap->pHeapBase);
     MOS_FreeMemory(mediaCtx->pVpCtxHeap);
 
+    MOS_FreeMemory(mediaCtx->pProtCtxHeap->pHeapBase);
+    MOS_FreeMemory(mediaCtx->pProtCtxHeap);
+
     MOS_FreeMemory(mediaCtx->pCmCtxHeap->pHeapBase);
     MOS_FreeMemory(mediaCtx->pCmCtxHeap);
 
@@ -1356,6 +1464,7 @@ static VAStatus DdiMedia_HeapDestroy(
     DdiMediaUtil_DestroyMutex(&mediaCtx->DecoderMutex);
     DdiMediaUtil_DestroyMutex(&mediaCtx->EncoderMutex);
     DdiMediaUtil_DestroyMutex(&mediaCtx->VpMutex);
+    DdiMediaUtil_DestroyMutex(&mediaCtx->ProtMutex);
     DdiMediaUtil_DestroyMutex(&mediaCtx->CmMutex);
     DdiMediaUtil_DestroyMutex(&mediaCtx->MfeMutex);
 
@@ -1384,6 +1493,10 @@ static VAStatus DdiMedia_HeapDestroy(
     {
         DDI_ASSERTMESSAGE("APP does not destroy all the VPs.");
     }
+    if (mediaCtx->uiNumProts != 0)
+    {
+        DDI_ASSERTMESSAGE("APP does not destroy all the Prots.");
+    }
     if (mediaCtx->uiNumCMs != 0)
     {
         DDI_ASSERTMESSAGE("APP does not destroy all the CMs.");
@@ -1411,6 +1524,7 @@ void FreeForMediaContext(PDDI_MEDIA_CONTEXT mediaCtx)
         MOS_FreeMemory(mediaCtx->pDecoderCtxHeap);
         MOS_FreeMemory(mediaCtx->pEncoderCtxHeap);
         MOS_FreeMemory(mediaCtx->pVpCtxHeap);
+        MOS_FreeMemory(mediaCtx->pProtCtxHeap);
         MOS_FreeMemory(mediaCtx->pMfeCtxHeap);
         MOS_FreeMemory(mediaCtx);
     }
@@ -1526,12 +1640,17 @@ VAStatus DdiMedia__Initialize (
     mediaCtx->pfnMemoryDecompress  = DdiMedia_MediaMemoryDecompressInternal;
     mediaCtx->pfnMediaMemoryCopy   = DdiMedia_MediaMemoryCopyInternal;
     mediaCtx->pfnMediaMemoryCopy2D = DdiMedia_MediaMemoryCopy2DInternal;
+    mediaCtx->pfnMediaMemoryTileConvert = DdiMedia_MediaMemoryTileConvertInternal;
 #endif
     mediaCtx->modularizedGpuCtxEnabled = true;
 
     if (mediaCtx->m_apoMosEnabled)
     {
-        MosUtilities::MosUtilitiesInit();
+        MOS_CONTEXT mosCtx     = {};
+        mosCtx.fd              = mediaCtx->fd;
+        mosCtx.m_apoMosEnabled = mediaCtx->m_apoMosEnabled;
+
+        MosInterface::InitOsUtilities(&mosCtx);
 
         mediaCtx->pGtSystemInfo = (MEDIA_SYSTEM_INFO *)MOS_AllocAndZeroMemory(sizeof(MEDIA_SYSTEM_INFO));
         if (nullptr == mediaCtx->pGtSystemInfo)
@@ -1540,9 +1659,6 @@ VAStatus DdiMedia__Initialize (
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
         }
 
-        MOS_CONTEXT mosCtx                  = {};
-        mosCtx.fd                           = mediaCtx->fd;
-        mosCtx.m_apoMosEnabled              = mediaCtx->m_apoMosEnabled;
         if (MosInterface::CreateOsDeviceContext(&mosCtx, &mediaCtx->m_osDeviceContext) != MOS_STATUS_SUCCESS)
         {
             DDI_ASSERTMESSAGE("Unable to create MOS device context.");
@@ -1569,13 +1685,14 @@ VAStatus DdiMedia__Initialize (
         }
         mediaCtx->pMediaMemDecompState      = *mosCtx.ppMediaMemDecompState;
 #endif
+        mediaCtx->pMediaCopyState           = *mosCtx.ppMediaCopyState;
     }
     else if (mediaCtx->modularizedGpuCtxEnabled)
     {
         // prepare m_osContext
-        MOS_utilities_init();
+        MosUtilities::MosUtilitiesInit(nullptr);
         //Read user feature key here for Per Utility Tool Enabling
-#if _RELEASE_INTERNAL
+
         if (!g_perfutility->bPerfUtilityKey)
         {
             MOS_USER_FEATURE_VALUE_DATA UserFeatureData;
@@ -1583,7 +1700,8 @@ VAStatus DdiMedia__Initialize (
             MOS_UserFeature_ReadValue_ID(
                 NULL,
                 __MEDIA_USER_FEATURE_VALUE_PERF_UTILITY_TOOL_ENABLE_ID,
-                &UserFeatureData);
+                &UserFeatureData,
+                nullptr);
             g_perfutility->dwPerfUtilityIsEnabled = UserFeatureData.i32Data;
 
             char                        sFilePath[MOS_MAX_PERF_FILENAME_LEN + 1] = "";
@@ -1595,7 +1713,8 @@ VAStatus DdiMedia__Initialize (
             eStatus_Perf                        = MOS_UserFeature_ReadValue_ID(
                 nullptr,
                 __MEDIA_USER_FEATURE_VALUE_PERF_OUTPUT_DIRECTORY_ID,
-                &perfFilePath);
+                &perfFilePath,
+                nullptr);
             if (eStatus_Perf == MOS_STATUS_SUCCESS)
             {
                 g_perfutility->setupFilePath(sFilePath);
@@ -1607,7 +1726,6 @@ VAStatus DdiMedia__Initialize (
 
             g_perfutility->bPerfUtilityKey = true;
         }
-#endif
 
         mediaCtx->pDrmBufMgr = mos_bufmgr_gem_init(mediaCtx->fd, DDI_CODEC_BATCH_BUFFER_SIZE);
         if (nullptr == mediaCtx->pDrmBufMgr)
@@ -1725,7 +1843,8 @@ VAStatus DdiMedia__Initialize (
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_SIM_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            nullptr);
 #endif
 
         mediaCtx->m_useSwSwizzling = UserFeatureData.i32Data || MEDIA_IS_SKU(&mediaCtx->SkuTable, FtrUseSwSwizzling);
@@ -1752,6 +1871,8 @@ VAStatus DdiMedia__Initialize (
         mosCtx.pfnMemoryDecompress   = mediaCtx->pfnMemoryDecompress;
         mosCtx.pfnMediaMemoryCopy    = mediaCtx->pfnMediaMemoryCopy;
         mosCtx.pfnMediaMemoryCopy2D  = mediaCtx->pfnMediaMemoryCopy2D;
+        mosCtx.ppMediaCopyState      = &mediaCtx->pMediaCopyState;
+        mosCtx.pfnMediaCopy          = mediaCtx->pfnMediaCopy;
         mosCtx.m_auxTableMgr         = mediaCtx->m_auxTableMgr;
         mosCtx.pGmmClientContext     = mediaCtx->pGmmClientContext;
 
@@ -1891,13 +2012,14 @@ static VAStatus DdiMedia_Terminate (
     DdiMedia_FreeContextCMElements(ctx);
 
     DdiMedia_HeapDestroy(mediaCtx);
+    DdiMediaProtected::FreeInstances();
 
     if (mediaCtx->m_apoMosEnabled)
     {
         MosInterface::DestroyOsDeviceContext(mediaCtx->m_osDeviceContext);
         mediaCtx->m_osDeviceContext = MOS_INVALID_HANDLE;
         MOS_FreeMemory(mediaCtx->pGtSystemInfo);
-        MosUtilities::MosUtilitiesClose();
+        MosInterface::CloseOsUtilities(nullptr);
     }
     else if (mediaCtx->modularizedGpuCtxEnabled)
     {
@@ -1933,7 +2055,7 @@ static VAStatus DdiMedia_Terminate (
         // Free GMM memory.
         mediaCtx->GmmFuncs.pfnDeleteClientContext(mediaCtx->pGmmClientContext);
         mediaCtx->GmmFuncs.pfnDestroySingletonContext();
-        MOS_utilities_close();
+        MosUtilities::MosUtilitiesClose(nullptr);
     }
 
     if (mediaCtx->uiRef > 1)
@@ -2132,6 +2254,8 @@ static VAStatus DdiMedia_CreateSurfaces (
 )
 {
     DDI_FUNCTION_ENTER();
+    int32_t event[] = {width, height, format};
+    MOS_TraceEventExt(EVENT_VA_SURFACE, EVENT_TYPE_START, event, sizeof(event), nullptr, 0);
 
     DDI_CHK_NULL(ctx,               "nullptr ctx",             VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_LARGER(num_surfaces, 0, "Invalid num_surfaces", VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -2156,7 +2280,7 @@ static VAStatus DdiMedia_CreateSurfaces (
     height = MOS_ALIGN_CEIL(height, 16);
     for(int32_t i = 0; i < num_surfaces; i++)
     {
-        VASurfaceID vaSurfaceID = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaDrvCtx, mediaFmt, width, height, nullptr, VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC);
+        VASurfaceID vaSurfaceID = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaDrvCtx, mediaFmt, width, height, nullptr, VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC, MOS_MEMPOOL_VIDEOMEMORY);
         if (VA_INVALID_ID != vaSurfaceID)
             surfaces[i] = vaSurfaceID;
         else
@@ -2166,6 +2290,7 @@ static VAStatus DdiMedia_CreateSurfaces (
         }
     }
 
+    MOS_TraceEventExt(EVENT_VA_SURFACE, EVENT_TYPE_END, &num_surfaces, sizeof(int32_t), surfaces, num_surfaces*sizeof(VAGenericID));
     return VA_STATUS_SUCCESS;
 }
 
@@ -2188,6 +2313,7 @@ static VAStatus DdiMedia_DestroySurfaces (
     DDI_CHK_NULL  (ctx,             "nullptr ctx",             VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_LARGER(num_surfaces, 0, "Invalid num_surfaces", VA_STATUS_ERROR_INVALID_PARAMETER);
     DDI_CHK_NULL  (surfaces,        "nullptr surfaces",        VA_STATUS_ERROR_INVALID_PARAMETER);
+    MOS_TraceEventExt(EVENT_VA_FREE_SURFACE, EVENT_TYPE_START, &num_surfaces, sizeof(int32_t), surfaces, num_surfaces*sizeof(VAGenericID));
 
     PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
     DDI_CHK_NULL  (mediaCtx,                  "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
@@ -2238,6 +2364,7 @@ static VAStatus DdiMedia_DestroySurfaces (
         DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
     }
 
+    MOS_TraceEventExt(EVENT_VA_FREE_SURFACE, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -2254,6 +2381,8 @@ DdiMedia_CreateSurfaces2(
     )
 {
     DDI_FUNCTION_ENTER();
+    uint32_t event[] = {width, height, format};
+    MOS_TraceEventExt(EVENT_VA_SURFACE, EVENT_TYPE_START, event, sizeof(event), nullptr, 0);
 
     DDI_CHK_NULL  (ctx,             "nullptr ctx",             VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_LARGER(num_surfaces, 0, "Invalid num_surfaces", VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -2285,7 +2414,11 @@ DdiMedia_CreateSurfaces2(
             expected_fourcc = VA_FOURCC_Y210;
             break;
         case VA_RT_FORMAT_YUV422_12:
+#if VA_CHECK_VERSION(1, 9, 0)
+            expected_fourcc = VA_FOURCC_Y212;
+#else
             expected_fourcc = VA_FOURCC_Y216;
+#endif
             break;
         case VA_RT_FORMAT_YUV444:
             expected_fourcc = VA_FOURCC_444P;
@@ -2294,7 +2427,11 @@ DdiMedia_CreateSurfaces2(
             expected_fourcc = VA_FOURCC_Y410;
             break;
         case VA_RT_FORMAT_YUV444_12:
+#if VA_CHECK_VERSION(1, 9, 0)
+            expected_fourcc = VA_FOURCC_Y412;
+#else
             expected_fourcc = VA_FOURCC_Y416;
+#endif
             break;
         case VA_RT_FORMAT_YUV411:
             expected_fourcc = VA_FOURCC_411P;
@@ -2371,6 +2508,11 @@ DdiMedia_CreateSurfaces2(
         case VA_FOURCC_Y210:
             expected_fourcc = VA_FOURCC_Y210;
             break;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y212:
+            expected_fourcc = VA_FOURCC_Y212;
+            break;
+#endif
         case VA_FOURCC_Y216:
             expected_fourcc = VA_FOURCC_Y216;
             break;
@@ -2380,6 +2522,11 @@ DdiMedia_CreateSurfaces2(
         case VA_FOURCC_Y410:
             expected_fourcc = VA_FOURCC_Y410;
             break;
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y412:
+            expected_fourcc = VA_FOURCC_Y412;
+            break;
+#endif
         case VA_FOURCC_Y416:
             expected_fourcc = VA_FOURCC_Y416;
             break;
@@ -2560,7 +2707,7 @@ DdiMedia_CreateSurfaces2(
                 }
             }
         }
-        VASurfaceID vaSurfaceID = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, width, height, surfDesc, surfaceUsageHint);
+        VASurfaceID vaSurfaceID = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, width, height, surfDesc, surfaceUsageHint, MOS_MEMPOOL_VIDEOMEMORY);
         if (VA_INVALID_ID != vaSurfaceID)
         {
             surfaces[i] = vaSurfaceID;
@@ -2576,6 +2723,7 @@ DdiMedia_CreateSurfaces2(
         }
     }
 
+    MOS_TraceEventExt(EVENT_VA_SURFACE, EVENT_TYPE_END, &num_surfaces, sizeof(uint32_t), surfaces, num_surfaces*sizeof(VAGenericID));
     return VA_STATUS_SUCCESS;
 }
 
@@ -2731,6 +2879,7 @@ static VAStatus DdiMedia_AddContextInternal(
 
         encoder->m_mfeEnabled = false;
 
+        DdiMediaUtil_UnLockMutex(&encodeMfeContext->encodeMfeMutex);
         return VA_STATUS_ERROR_OPERATION_FAILED;
     }
 
@@ -2853,7 +3002,6 @@ static VAStatus DdiMedia_DestroyContext (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             return DdiDecode_DestroyContext(ctx, context);
         case DDI_MEDIA_CONTEXT_TYPE_ENCODER:
             return DdiEncode_DestroyContext(ctx, context);
@@ -2878,6 +3026,8 @@ static VAStatus DdiMedia_CreateBuffer (
 )
 {
     DDI_FUNCTION_ENTER();
+    int32_t event[] = {size, num_elements, type};
+    MOS_TraceEventExt(EVENT_VA_BUFFER, EVENT_TYPE_START, event, sizeof(event), nullptr, 0);
 
     DDI_CHK_NULL(ctx,        "nullptr ctx",     VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(bufId,     "nullptr buf_id",  VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -2897,7 +3047,6 @@ static VAStatus DdiMedia_CreateBuffer (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             va = DdiDecode_CreateBuffer(ctx, DdiDecode_GetDecContextFromPVOID(ctxPtr), type, size, num_elements, data, bufId);
             break;
         case DDI_MEDIA_CONTEXT_TYPE_ENCODER:
@@ -2911,6 +3060,7 @@ static VAStatus DdiMedia_CreateBuffer (
     }
 
     DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
+    MOS_TraceEventExt(EVENT_VA_BUFFER, EVENT_TYPE_END, bufId, sizeof(bufId), nullptr, 0);
     return va;
 }
 
@@ -2983,6 +3133,7 @@ VAStatus DdiMedia_MapBufferInternal (
 )
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_START, &buf_id, sizeof(buf_id), &flag, sizeof(flag));
 
     DDI_CHK_NULL(ctx,   "nullptr ctx",     VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(pbuf,  "nullptr pbuf",    VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -2999,17 +3150,17 @@ VAStatus DdiMedia_MapBufferInternal (
     // The context is nullptr when the buffer is created from DdiMedia_DeriveImage
     // So doesn't need to check the context for all cases
     // Only check the context in dec/enc mode
+    VAStatus                 vaStatus  = VA_STATUS_SUCCESS;
     uint32_t                 ctxType = DdiMedia_GetCtxTypeFromVABufferID(mediaCtx, buf_id);
     void                     *ctxPtr = nullptr;
     DDI_CODEC_COM_BUFFER_MGR *bufMgr = nullptr;
-    PDDI_ENCODE_CONTEXT      encCtx = nullptr;
-    PDDI_DECODE_CONTEXT      decCtx = nullptr;
+    PDDI_ENCODE_CONTEXT      encCtx  = nullptr;
+    PDDI_DECODE_CONTEXT      decCtx  = nullptr;
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_VP:
             break;
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             ctxPtr = DdiMedia_GetCtxFromVABufferID(mediaCtx, buf_id);
             DDI_CHK_NULL(ctxPtr, "nullptr ctxPtr", VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -3030,6 +3181,7 @@ VAStatus DdiMedia_MapBufferInternal (
             return VA_STATUS_ERROR_INVALID_BUFFER;
     }
 
+    MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_INFO, &ctxType, sizeof(ctxType), &buf->uiType, sizeof(uint32_t));
     switch ((int32_t)buf->uiType)
     {
         case VASliceDataBufferType:
@@ -3078,7 +3230,7 @@ VAStatus DdiMedia_MapBufferInternal (
                 case CODECHAL_DECODE_MODE_VP9VLD:
                     *pbuf = (void *)((uint8_t*)(bufMgr->Codec_Param.Codec_Param_VP9.pVASliceParaBufVP9) + buf->uiOffset);
                     break;
-                case CODECHAL_DECODE_RESERVED_0:
+                case CODECHAL_DECODE_MODE_AV1VLD:
                     *pbuf = (void *)((uint8_t*)(bufMgr->pCodecSlcParamReserved) + buf->uiOffset);
                     break;
                 default:
@@ -3091,7 +3243,9 @@ VAStatus DdiMedia_MapBufferInternal (
 
             if( DdiEncode_CodedBufferExistInStatusReport( encCtx, buf ) )
             {
-                return DdiEncode_StatusReport(encCtx, buf, pbuf);
+                vaStatus = DdiEncode_StatusReport(encCtx, buf, pbuf);
+                MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+                return vaStatus;
             }
             // so far a coded buffer that has NOT been added into status report is skipped frame in non-CP case
             // but this can change in future if new usage models come up
@@ -3111,7 +3265,9 @@ VAStatus DdiMedia_MapBufferInternal (
                                                                                                           : PRE_ENC_BUFFER_TYPE_STATS_BOT);
                 if((encCtx->codecFunction == CODECHAL_FUNCTION_FEI_PRE_ENC) && DdiEncode_PreEncBufferExistInStatusReport( encCtx, buf, idx))
                 {
-                    return  DdiEncode_PreEncStatusReport(encCtx, buf, pbuf);
+                    vaStatus = DdiEncode_PreEncStatusReport(encCtx, buf, pbuf);
+                    MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+                    return vaStatus;
                 }
                 if(buf->bo)
                 {
@@ -3155,7 +3311,9 @@ VAStatus DdiMedia_MapBufferInternal (
                                                                                         FEI_ENC_BUFFER_TYPE_DISTORTION);
                     if((feiPicParams != nullptr) && (encCtx->codecFunction == CODECHAL_FUNCTION_FEI_ENC) && DdiEncode_EncBufferExistInStatusReport( encCtx, buf, idx))
                     {
-                        return  DdiEncode_EncStatusReport(encCtx, buf, pbuf);
+                        vaStatus = DdiEncode_EncStatusReport(encCtx, buf, pbuf);
+                        MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+                        return vaStatus;
                     }
                 }
                 else if(encCtx->wModeType == CODECHAL_ENCODE_MODE_HEVC)
@@ -3167,7 +3325,9 @@ VAStatus DdiMedia_MapBufferInternal (
                                                                                                       FEI_ENC_BUFFER_TYPE_DISTORTION);
                     if((feiPicParams != nullptr) && (encCtx->codecFunction == CODECHAL_FUNCTION_FEI_ENC) && DdiEncode_EncBufferExistInStatusReport( encCtx, buf, idx))
                     {
-                        return  DdiEncode_EncStatusReport(encCtx, buf, pbuf);
+                        vaStatus = DdiEncode_EncStatusReport(encCtx, buf, pbuf);
+                        MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+                        return vaStatus;
                     }
                 }
                 if(buf->bo)
@@ -3183,6 +3343,7 @@ VAStatus DdiMedia_MapBufferInternal (
             DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
             *pbuf = DdiMediaUtil_LockBuffer(buf, flag);
             DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
+            MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
             if (nullptr == (*pbuf))
             {
                 return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -3210,22 +3371,26 @@ VAStatus DdiMedia_MapBufferInternal (
             if((buf->format != Media_Format_CPU) && (DdiMedia_MediaFormatToOsFormat(buf->format) != VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT))
             {
                 DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
+                // A critical section starts.
+                // Make sure not to bailout with a return until the section ends.
 
-                if ((nullptr != buf->pSurface) && (Media_Format_CPU != buf->format))
+                if (nullptr != buf->pSurface && Media_Format_CPU != buf->format)
                 {
-                    DDI_CHK_RET(DdiMedia_MediaMemoryDecompress(mediaCtx, buf->pSurface),"MMD unsupported!");
+                    vaStatus = DdiMedia_MediaMemoryDecompress(mediaCtx, buf->pSurface);
                 }
 
-                *pbuf = DdiMediaUtil_LockBuffer(buf, flag);
+                if (VA_STATUS_SUCCESS == vaStatus)
+                {
+                    *pbuf = DdiMediaUtil_LockBuffer(buf, flag);
+
+                    if (nullptr == *pbuf)
+                    {
+                        vaStatus = VA_STATUS_ERROR_OPERATION_FAILED;
+                    }
+                }
+
+                // The critical section ends.
                 DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
-                if (nullptr == (*pbuf))
-                {
-                    return VA_STATUS_ERROR_OPERATION_FAILED;
-                }
-                else
-                {
-                    return VA_STATUS_SUCCESS;
-                }
             }
             else
             {
@@ -3234,7 +3399,8 @@ VAStatus DdiMedia_MapBufferInternal (
             break;
     }
 
-    return VA_STATUS_SUCCESS;
+    MOS_TraceEventExt(EVENT_VA_MAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+    return vaStatus;
 }
 
 VAStatus DdiMedia_MapBuffer (
@@ -3257,6 +3423,7 @@ VAStatus DdiMedia_UnmapBuffer (
 )
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_UNMAP, EVENT_TYPE_START, &buf_id, sizeof(buf_id), nullptr, 0);
 
     DDI_CHK_NULL(ctx, "nullptr ctx", VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -3282,7 +3449,6 @@ VAStatus DdiMedia_UnmapBuffer (
         case DDI_MEDIA_CONTEXT_TYPE_VP:
             break;
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             ctxPtr = DdiMedia_GetCtxFromVABufferID(mediaCtx, buf_id);
             DDI_CHK_NULL(ctxPtr, "nullptr ctxPtr", VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -3345,6 +3511,7 @@ VAStatus DdiMedia_UnmapBuffer (
             break;
     }
 
+    MOS_TraceEventExt(EVENT_VA_UNMAP, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -3358,6 +3525,7 @@ VAStatus DdiMedia_DestroyBuffer (
 )
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_FREE_BUFFER, EVENT_TYPE_START, &buffer_id, sizeof(buffer_id), nullptr, 0);
 
     DDI_CHK_NULL(ctx,                    "nullptr ctx",                    VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -3379,7 +3547,6 @@ VAStatus DdiMedia_DestroyBuffer (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             DDI_CHK_NULL(ctxPtr, "nullptr ctxPtr", VA_STATUS_ERROR_INVALID_CONTEXT);
             decCtx = DdiDecode_GetDecContextFromPVOID(ctxPtr);
             bufMgr = &(decCtx->BufMgr);
@@ -3425,6 +3592,7 @@ VAStatus DdiMedia_DestroyBuffer (
 
                 if (buf->uiExportcount) {
                     buf->bPostponedBufFree = true;
+                    MOS_TraceEventExt(EVENT_VA_FREE_BUFFER, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
                     return VA_STATUS_SUCCESS;
                 }
             }
@@ -3535,7 +3703,7 @@ VAStatus DdiMedia_DestroyBuffer (
     MOS_FreeMemory(buf);
 
     DdiMedia_DestroyBufFromVABufferID(mediaCtx, buffer_id);
-
+    MOS_TraceEventExt(EVENT_VA_FREE_BUFFER, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -3560,6 +3728,8 @@ static VAStatus DdiMedia_BeginPicture (
 
     uint32_t ctxType = DDI_MEDIA_CONTEXT_TYPE_NONE;
     void     *ctxPtr = DdiMedia_GetContextFromContextID(ctx, context, &ctxType);
+    uint32_t event[] = {(uint32_t)context, ctxType, (uint32_t)render_target};
+    MOS_TraceEventExt(EVENT_VA_PICTURE, EVENT_TYPE_START, event, sizeof(event), nullptr, 0);
 
     PDDI_MEDIA_SURFACE surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, render_target);
     DDI_CHK_NULL(surface, "nullptr surface", VA_STATUS_ERROR_INVALID_SURFACE);
@@ -3576,7 +3746,6 @@ static VAStatus DdiMedia_BeginPicture (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             return DdiDecode_BeginPicture(ctx, context, render_target);
         case DDI_MEDIA_CONTEXT_TYPE_ENCODER:
             return DdiEncode_BeginPicture(ctx, context, render_target);
@@ -3605,6 +3774,8 @@ static VAStatus DdiMedia_RenderPicture (
     DDI_CHK_NULL(  ctx,            "nullptr ctx",                   VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(  buffers,        "nullptr buffers",               VA_STATUS_ERROR_INVALID_PARAMETER);
     DDI_CHK_LARGER(num_buffers, 0, "Invalid number buffers",     VA_STATUS_ERROR_INVALID_PARAMETER);
+    uint32_t event[] = {(uint32_t)context, (uint32_t)num_buffers};
+    MOS_TraceEventExt(EVENT_VA_PICTURE, EVENT_TYPE_INFO, event, sizeof(event), buffers, num_buffers*sizeof(VAGenericID));
 
     PDDI_MEDIA_CONTEXT mediaCtx   = DdiMedia_GetMediaContext(ctx);
     DDI_CHK_NULL(mediaCtx,              "nullptr mediaCtx",              VA_STATUS_ERROR_INVALID_CONTEXT);
@@ -3621,7 +3792,6 @@ static VAStatus DdiMedia_RenderPicture (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             return DdiDecode_RenderPicture(ctx, context, buffers, num_buffers);
         case DDI_MEDIA_CONTEXT_TYPE_ENCODER:
             return DdiEncode_RenderPicture(ctx, context, buffers, num_buffers);
@@ -3655,7 +3825,6 @@ static VAStatus DdiMedia_EndPicture (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
-        case DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER:
             vaStatus = DdiDecode_EndPicture(ctx, context);
             break;
         case DDI_MEDIA_CONTEXT_TYPE_ENCODER:
@@ -3669,48 +3838,22 @@ static VAStatus DdiMedia_EndPicture (
             vaStatus = VA_STATUS_ERROR_INVALID_CONTEXT;
     }
 
+    MOS_TraceEventExt(EVENT_VA_PICTURE, EVENT_TYPE_END, &context, sizeof(context), &vaStatus, sizeof(vaStatus));
     PERF_UTILITY_STOP_ONCE("First Frame Time", PERF_MOS, PERF_LEVEL_DDI);
 
     return vaStatus;
 }
 
-/*
- * This function blocks until all pending operations on the render target
- * have been completed.  Upon return it is safe to use the render target for a
- * different picture.
- */
-static VAStatus DdiMedia_SyncSurface (
-    VADriverContextP    ctx,
-    VASurfaceID         render_target
+static VAStatus DdiMedia_StatusCheck (
+    PDDI_MEDIA_CONTEXT mediaCtx,
+    DDI_MEDIA_SURFACE  *surface,
+    VASurfaceID surface_id
 )
 {
-    PERF_UTILITY_AUTO(__FUNCTION__, "ENCODE", "DDI");
-
     DDI_FUNCTION_ENTER();
 
-    DDI_CHK_NULL(ctx,    "nullptr ctx",    VA_STATUS_ERROR_INVALID_CONTEXT);
-
-    PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
-    DDI_CHK_NULL(mediaCtx,               "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
-    DDI_CHK_NULL(mediaCtx->pSurfaceHeap, "nullptr mediaCtx->pSurfaceHeap", VA_STATUS_ERROR_INVALID_CONTEXT);
-
-    DDI_CHK_LESS((uint32_t)render_target, mediaCtx->pSurfaceHeap->uiAllocatedHeapElements, "Invalid render_target", VA_STATUS_ERROR_INVALID_SURFACE);
-
-    DDI_MEDIA_SURFACE  *surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, render_target);
-    DDI_CHK_NULL(surface,    "nullptr surface",      VA_STATUS_ERROR_INVALID_CONTEXT);
-    if (surface->pCurrentFrameSemaphore)
-    {
-        DdiMediaUtil_WaitSemaphore(surface->pCurrentFrameSemaphore);
-        DdiMediaUtil_PostSemaphore(surface->pCurrentFrameSemaphore);
-    }
-
-    // check the bo here?
-    // zero is a expected return value
-    uint32_t timeout_NS = 100000000;
-    while (0 != mos_gem_bo_wait(surface->bo, timeout_NS))
-    {
-        // Just loop while gem_bo_wait times-out.
-    }
+    DDI_CHK_NULL(mediaCtx, "nullptr mediaCtx", VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(surface,  "nullptr surface",  VA_STATUS_ERROR_INVALID_CONTEXT);
 
     uint32_t i = 0;
     PDDI_DECODE_CONTEXT decCtx = (PDDI_DECODE_CONTEXT)surface->pDecCtx;
@@ -3723,7 +3866,6 @@ static VAStatus DdiMedia_SyncSurface (
         DDI_CHK_NULL(codecHal, "nullptr decCtx->pCodecHal", VA_STATUS_SUCCESS);
 
         //return success just avoid vaDestroyContext is ahead of vaSyncSurface
-    #ifdef _APOGEIOS_SUPPORTED
         if (codecHal->IsApogeiosEnabled())
         {
             DecodePipelineAdapter *decoder = dynamic_cast<DecodePipelineAdapter *>(codecHal);
@@ -3731,7 +3873,6 @@ static VAStatus DdiMedia_SyncSurface (
             return DdiDecode_StatusReport(mediaCtx, decoder, surface);
         }
         else
-    #endif
         {
             CodechalDecode *decoder = dynamic_cast<CodechalDecode *>(codecHal);
             DDI_CHK_NULL(decoder, "nullptr (CodechalDecode *decoder)", VA_STATUS_SUCCESS);
@@ -3772,7 +3913,7 @@ static VAStatus DdiMedia_SyncSurface (
                 tempSurface->curStatusReport.vpp.status = (uint32_t)tempVpReport.dwStatus;
                 tempSurface->curStatusReportQueryState  = DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED;
 
-                if(tempVpReport.StatusFeedBackID == render_target)
+                if(tempVpReport.StatusFeedBackID == surface_id)
                 {
                     break;
                 }
@@ -3801,8 +3942,201 @@ static VAStatus DdiMedia_SyncSurface (
     }
 
     return VA_STATUS_SUCCESS;
+
 }
 
+/*
+ * This function blocks until all pending operations on the render target
+ * have been completed.  Upon return it is safe to use the render target for a
+ * different picture.
+ */
+static VAStatus DdiMedia_SyncSurface (
+    VADriverContextP    ctx,
+    VASurfaceID         render_target
+)
+{
+    PERF_UTILITY_AUTO(__FUNCTION__, "ENCODE", "DDI");
+
+    DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_START, &render_target, sizeof(VAGenericID), nullptr, 0);
+
+    DDI_CHK_NULL(ctx,    "nullptr ctx",    VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
+    DDI_CHK_NULL(mediaCtx,               "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(mediaCtx->pSurfaceHeap, "nullptr mediaCtx->pSurfaceHeap", VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    DDI_CHK_LESS((uint32_t)render_target, mediaCtx->pSurfaceHeap->uiAllocatedHeapElements, "Invalid render_target", VA_STATUS_ERROR_INVALID_SURFACE);
+
+    DDI_MEDIA_SURFACE  *surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, render_target);
+    DDI_CHK_NULL(surface,    "nullptr surface",      VA_STATUS_ERROR_INVALID_CONTEXT);
+    if (surface->pCurrentFrameSemaphore)
+    {
+        DdiMediaUtil_WaitSemaphore(surface->pCurrentFrameSemaphore);
+        DdiMediaUtil_PostSemaphore(surface->pCurrentFrameSemaphore);
+    }
+
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_INFO, surface->bo? &surface->bo->handle:nullptr, sizeof(uint32_t), nullptr, 0);
+    // check the bo here?
+    // zero is a expected return value
+    uint32_t timeout_NS = 100000000;
+    while (0 != mos_gem_bo_wait(surface->bo, timeout_NS))
+    {
+        // Just loop while gem_bo_wait times-out.
+    }
+
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+    return DdiMedia_StatusCheck(mediaCtx, surface, render_target);
+}
+
+#if VA_CHECK_VERSION(1, 9, 0)
+/*
+ * This function blocks until all pending operations on the surface have been 
+ * completed or exceed timeout.  Upon return it is safe to use the render target for a
+ * different picture.
+ */
+static VAStatus DdiMedia_SyncSurface2 (
+    VADriverContextP    ctx,
+    VASurfaceID         surface_id,
+    uint64_t            timeout_ns
+)
+{
+    PERF_UTILITY_AUTO(__FUNCTION__, "ENCODE", "DDI");
+
+    DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_START, &surface_id, sizeof(VAGenericID), nullptr, 0);
+
+    DDI_CHK_NULL(ctx,    "nullptr ctx",    VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
+    DDI_CHK_NULL(mediaCtx,               "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(mediaCtx->pSurfaceHeap, "nullptr mediaCtx->pSurfaceHeap", VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    DDI_CHK_LESS((uint32_t)surface_id, mediaCtx->pSurfaceHeap->uiAllocatedHeapElements, "Invalid render_target", VA_STATUS_ERROR_INVALID_SURFACE);
+
+    DDI_MEDIA_SURFACE  *surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, surface_id);
+    DDI_CHK_NULL(surface,    "nullptr surface",      VA_STATUS_ERROR_INVALID_CONTEXT);
+    if (surface->pCurrentFrameSemaphore)
+    {
+        DdiMediaUtil_WaitSemaphore(surface->pCurrentFrameSemaphore);
+        DdiMediaUtil_PostSemaphore(surface->pCurrentFrameSemaphore);
+    }
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_INFO, surface->bo? &surface->bo->handle:nullptr, sizeof(uint32_t), nullptr, 0);
+
+    if (timeout_ns == VA_TIMEOUT_INFINITE)
+    {
+        // zero is an expected return value when not hit timeout
+        auto ret = mos_gem_bo_wait(surface->bo, DDI_BO_INFINITE_TIMEOUT);
+        if (0 != ret)
+        {
+            DDI_NORMALMESSAGE("vaSyncSurface2: surface is still used by HW\n\r");
+            return VA_STATUS_ERROR_TIMEDOUT;
+        }
+    }
+    else
+    {
+        int64_t timeoutBoWait1 = 0;
+        int64_t timeoutBoWait2 = 0;
+        if (timeout_ns >= DDI_BO_MAX_TIMEOUT)
+        {
+            timeoutBoWait1 = DDI_BO_MAX_TIMEOUT - 1;
+            timeoutBoWait2 = timeout_ns - DDI_BO_MAX_TIMEOUT + 1;
+        }
+        else
+        {
+            timeoutBoWait1 = (int64_t)timeout_ns;
+        }
+        
+        // zero is an expected return value when not hit timeout
+        auto ret = mos_gem_bo_wait(surface->bo, timeoutBoWait1);
+        if (0 != ret)
+        {
+            if (timeoutBoWait2)
+            {
+                ret = mos_gem_bo_wait(surface->bo, timeoutBoWait2); 
+            }
+            if (0 != ret)
+            {
+                DDI_NORMALMESSAGE("vaSyncSurface2: surface is still used by HW\n\r");
+                return VA_STATUS_ERROR_TIMEDOUT;
+            }
+        }
+    }
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+    return DdiMedia_StatusCheck(mediaCtx, surface, surface_id);
+}
+
+/*
+ * This function blocks until all pending operations on the buffer have been
+ * completed or exceed timeout.  Upon return it is safe to use the render target for a
+ * different picture.
+ */
+static VAStatus DdiMedia_SyncBuffer (
+    VADriverContextP    ctx,
+    VABufferID          buf_id,
+    uint64_t            timeout_ns
+)
+{
+    PERF_UTILITY_AUTO(__FUNCTION__, "ENCODE", "DDI");
+
+    DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_START, &buf_id, sizeof(buf_id), nullptr, 0);
+
+    DDI_CHK_NULL(ctx,    "nullptr ctx",    VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
+    DDI_CHK_NULL(mediaCtx,               "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(mediaCtx->pBufferHeap,  "nullptr mediaCtx->pBufferHeap",  VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    DDI_CHK_LESS((uint32_t)buf_id, mediaCtx->pBufferHeap->uiAllocatedHeapElements, "Invalid buffer", VA_STATUS_ERROR_INVALID_BUFFER);
+
+    DDI_MEDIA_BUFFER  *buffer = DdiMedia_GetBufferFromVABufferID(mediaCtx, buf_id);
+    DDI_CHK_NULL(buffer,    "nullptr buffer",      VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_INFO, buffer->bo? &buffer->bo->handle:nullptr, sizeof(uint32_t), nullptr, 0);
+    if (timeout_ns == VA_TIMEOUT_INFINITE)
+    {
+        // zero is a expected return value when not hit timeout
+        auto ret = mos_gem_bo_wait(buffer->bo, DDI_BO_INFINITE_TIMEOUT);
+        if (0 != ret)
+        {
+            DDI_NORMALMESSAGE("vaSyncBuffer: buffer is still used by HW\n\r");
+            return VA_STATUS_ERROR_TIMEDOUT;
+        }
+    }
+    else
+    {
+        int64_t timeoutBoWait1 = 0;
+        int64_t timeoutBoWait2 = 0;
+        if (timeout_ns >= DDI_BO_MAX_TIMEOUT)
+        {
+            timeoutBoWait1 = DDI_BO_MAX_TIMEOUT - 1;
+            timeoutBoWait2 = timeout_ns - DDI_BO_MAX_TIMEOUT + 1;
+        }
+        else
+        {
+            timeoutBoWait1 = (int64_t)timeout_ns;
+        }
+
+        // zero is a expected return value when not hit timeout
+        auto ret = mos_gem_bo_wait(buffer->bo, timeoutBoWait1);
+        if (0 != ret)
+        {
+            if (timeoutBoWait2)
+            {
+                ret = mos_gem_bo_wait(buffer->bo, timeoutBoWait2);
+            }
+            if (0 != ret)
+            {
+                DDI_NORMALMESSAGE("vaSyncBuffer: buffer is still used by HW\n\r");
+                return VA_STATUS_ERROR_TIMEDOUT;
+            }
+        }
+    }
+    MOS_TraceEventExt(EVENT_VA_SYNC, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
+    return VA_STATUS_SUCCESS;
+}
+#endif
 /*
  * Find out any pending ops on the render target
  */
@@ -3895,24 +4229,11 @@ VAStatus DdiMedia_QuerySurfaceError(
     VASurfaceDecodeMBErrors *surfaceErrors   = decCtx->vaSurfDecErrOutput;
     DDI_CHK_NULL(surfaceErrors , "nullptr surfaceErrors", VA_STATUS_ERROR_INVALID_CONTEXT );
 
+    VAStatus vaStatus = VA_STATUS_SUCCESS;
+
     DdiMediaUtil_LockMutex(&mediaCtx->SurfaceMutex);
     if (surface->curStatusReportQueryState == DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED)
     {
-        if (error_status == -1 && surface->curCtxType == DDI_MEDIA_CONTEXT_TYPE_DECODER)
-            //&& surface->curStatusReport.decode.status == CODECHAL_STATUS_SUCCESSFUL)  // get the crc value whatever the status is
-        {
-            CodechalDecode *decoder = dynamic_cast<CodechalDecode *>(decCtx->pCodecHal);
-            DDI_CHK_NULL(decoder, "nullptr codechal decoder", VA_STATUS_ERROR_INVALID_CONTEXT);
-            if (decoder->GetStandard() != CODECHAL_AVC)
-            {
-                DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
-                return VA_STATUS_ERROR_UNIMPLEMENTED;
-            }
-            *error_info = (void *)&surface->curStatusReport.decode.crcValue;
-            DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
-            return VA_STATUS_SUCCESS;
-        }
-
         if (error_status != -1 && surface->curCtxType == DDI_MEDIA_CONTEXT_TYPE_DECODER &&
             surface->curStatusReport.decode.status == CODECHAL_STATUS_ERROR)
         {
@@ -3925,6 +4246,32 @@ VAStatus DdiMedia_QuerySurfaceError(
             *error_info = surfaceErrors;
             DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
             return VA_STATUS_SUCCESS;
+        }
+
+        if (error_status == -1 && surface->curCtxType == DDI_MEDIA_CONTEXT_TYPE_DECODER)
+            //&& surface->curStatusReport.decode.status == CODECHAL_STATUS_SUCCESSFUL)  // get the crc value whatever the status is
+        {
+            CodechalDecode *decoder = dynamic_cast<CodechalDecode *>(decCtx->pCodecHal);
+
+            if (nullptr == decoder)
+            {
+                DDI_ASSERTMESSAGE("nullptr codechal decoder");
+                vaStatus = VA_STATUS_ERROR_INVALID_CONTEXT;
+            }
+            else
+            {
+                if (decoder->GetStandard() != CODECHAL_AVC)
+                {
+                    vaStatus = VA_STATUS_ERROR_UNIMPLEMENTED;
+                }
+                else
+                {
+                    *error_info = (void *)&surface->curStatusReport.decode.crcValue;
+                }
+            }
+
+            DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
+            return vaStatus;
         }
 
         if (surface->curCtxType == DDI_MEDIA_CONTEXT_TYPE_VP &&
@@ -4084,6 +4431,8 @@ VAStatus DdiMedia_CreateImage(
     DDI_CHK_NULL(image,       "Invalid image!",      VA_STATUS_ERROR_INVALID_PARAMETER);
     DDI_CHK_LARGER(width,  0, "Invalid width!",      VA_STATUS_ERROR_INVALID_PARAMETER);
     DDI_CHK_LARGER(height, 0, "Invalid height!",     VA_STATUS_ERROR_INVALID_PARAMETER);
+    int32_t event[] = {width, height, format->fourcc};
+    MOS_TraceEventExt(EVENT_VA_IMAGE, EVENT_TYPE_START, event, sizeof(event), nullptr, 0);
 
     PDDI_MEDIA_CONTEXT mediaCtx        = DdiMedia_GetMediaContext(ctx);
     DDI_CHK_NULL(mediaCtx,   "nullptr mediaCtx.",   VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -4159,8 +4508,14 @@ VAStatus DdiMedia_CreateImage(
         case VA_FOURCC_YVYU:
         case VA_FOURCC_AYUV:
         case VA_FOURCC_Y210:
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y212:
+#endif
         case VA_FOURCC_Y216:
         case VA_FOURCC_Y410:
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y412:
+#endif
         case VA_FOURCC_Y416:
         case VA_FOURCC_Y800:
             vaimg->num_planes = 1;
@@ -4273,6 +4628,7 @@ VAStatus DdiMedia_CreateImage(
     DdiMediaUtil_UnLockMutex(&mediaCtx->ImageMutex);
 
    *image = *vaimg;
+    MOS_TraceEventExt(EVENT_VA_IMAGE, EVENT_TYPE_END, &vaimg->image_id, sizeof(VAGenericID), nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -4296,6 +4652,7 @@ VAStatus DdiMedia_DeriveImage (
 )
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_DERIVE, EVENT_TYPE_START, nullptr, 0, nullptr, 0);
 
     DDI_CHK_NULL(ctx,   "nullptr ctx",   VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(image, "nullptr image", VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -4486,12 +4843,19 @@ VAStatus DdiMedia_DeriveImage (
     case Media_Format_Y410:
     case Media_Format_AYUV:
     case Media_Format_Y210:
+#if VA_CHECK_VERSION(1, 9, 0)
+    case Media_Format_Y212:
+#endif
+    case Media_Format_Y216:
         vaimg->format.bits_per_pixel    = 32;
         vaimg->data_size                = mediaSurface->iPitch * mediaSurface->iHeight;
         vaimg->num_planes               = 1;
         vaimg->pitches[0]               = mediaSurface->iPitch;
         vaimg->offsets[0]               = 0;
         break;
+#if VA_CHECK_VERSION(1, 9, 0)
+    case Media_Format_Y412:
+#endif
     case Media_Format_Y416:
         vaimg->format.bits_per_pixel    = 64; // packed format [alpha, Y, U, V], 16 bits per channel
         vaimg->num_planes               = 1;
@@ -4559,6 +4923,7 @@ VAStatus DdiMedia_DeriveImage (
 
     *image = *vaimg;
 
+    MOS_TraceEventExt(EVENT_VA_DERIVE, EVENT_TYPE_END, &surface, sizeof(surface), &vaimg->image_id, sizeof(VAGenericID));
     return VA_STATUS_SUCCESS;
 }
 
@@ -4578,6 +4943,7 @@ VAStatus DdiMedia_DestroyImage (
     VAImageID        image)
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_FREE_IMAGE, EVENT_TYPE_START, &image, sizeof(image), nullptr, 0);
 
     DDI_CHK_NULL(ctx, "nullptr ctx", VA_STATUS_ERROR_INVALID_CONTEXT);
     PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
@@ -4595,6 +4961,8 @@ VAStatus DdiMedia_DestroyImage (
     MOS_FreeMemory(vaImage);
 
     DdiMedia_DestroyImageFromVAImageID(mediaCtx, image);
+
+    MOS_TraceEventExt(EVENT_VA_FREE_IMAGE, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -4825,6 +5193,8 @@ VAStatus DdiMedia_GetImage(
 )
 {
     DDI_FUNCTION_ENTER();
+    uint32_t event[] = {surface, x, y, width, height, image};
+    MOS_TraceEventExt(EVENT_VA_GET, EVENT_TYPE_START, &event, sizeof(event), nullptr, 0);
 
     DDI_CHK_NULL(ctx,       "nullptr ctx.",         VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -4852,7 +5222,11 @@ VAStatus DdiMedia_GetImage(
     VASurfaceID output_surface = surface;
 
     if (inputSurface->format != DdiMedia_OsFormatToMediaFormat(vaimg->format.fourcc, vaimg->format.alpha_mask) ||
-        width != vaimg->width || height != vaimg->height)
+        width != vaimg->width || height != vaimg->height ||
+        (MEDIA_IS_WA(&mediaCtx->WaTable, WaEnableVPPCopy) &&
+        vaimg->format.fourcc != VA_FOURCC_444P &&
+        vaimg->format.fourcc != VA_FOURCC_422V &&
+        vaimg->format.fourcc != VA_FOURCC_422H))
     {
         VAContextID context = VA_INVALID_ID;
         //Create VP Context.
@@ -4864,13 +5238,28 @@ VAStatus DdiMedia_GetImage(
         if (mediaFmt == Media_Format_Count)
         {
             DDI_ASSERTMESSAGE("Unsupported surface type.");
+            DdiVp_DestroyContext(ctx, context);
             return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
         }
         PDDI_MEDIA_SURFACE_DESCRIPTOR surfDesc = (PDDI_MEDIA_SURFACE_DESCRIPTOR)MOS_AllocAndZeroMemory(sizeof(DDI_MEDIA_SURFACE_DESCRIPTOR));
-        DDI_CHK_NULL(surfDesc, "nullptr surfDesc.", VA_STATUS_ERROR_ALLOCATION_FAILED);
+        if (!surfDesc) {
+            DDI_ASSERTMESSAGE("nullptr surfDesc.");
+            DdiVp_DestroyContext(ctx, context);
+            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        }
         surfDesc->uiVaMemType = VA_SURFACE_ATTRIB_MEM_TYPE_VA;
-        target_surface = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, vaimg->width, vaimg->height, surfDesc, VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC);
-        DDI_CHK_RET(vaStatus, "Create temp surface failed.");
+        int memType = MOS_MEMPOOL_VIDEOMEMORY;
+        if (MEDIA_IS_SKU(&mediaCtx->SkuTable, FtrLocalMemory))
+        {
+            memType = MOS_MEMPOOL_SYSTEMMEMORY;
+        }
+        target_surface = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, vaimg->width, vaimg->height, surfDesc, VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC, memType);
+        if (VA_INVALID_SURFACE == target_surface)
+        {
+            DDI_ASSERTMESSAGE("Create temp surface failed.");
+            DdiVp_DestroyContext(ctx, context);
+            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        }
 
         VARectangle srcRect, dstRect;
         srcRect.x      = x;
@@ -4888,6 +5277,7 @@ VAStatus DdiMedia_GetImage(
         {
             DDI_ASSERTMESSAGE("VP Pipeline failed.");
             DdiMedia_DestroySurfaces(ctx, &target_surface, 1);
+            DdiVp_DestroyContext(ctx, context);
             return vaStatus;
         }
         vaStatus = DdiMedia_SyncSurface(ctx, target_surface);
@@ -4921,6 +5311,7 @@ VAStatus DdiMedia_GetImage(
     vaStatus = DdiMedia_CopySurfaceToImage(ctx, inputSurface, vaimg);
     DDI_CHK_RET(vaStatus, "Copy surface to image failed.");
 #endif
+    MOS_TraceEventExt(EVENT_VA_GET, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -4969,6 +5360,8 @@ VAStatus DdiMedia_PutImage(
 )
 {
     DDI_FUNCTION_ENTER();
+    uint32_t event[] = {surface, image, src_x, src_y, src_width, src_height, dest_x, dest_y, dest_width, dest_height};
+    MOS_TraceEventExt(EVENT_VA_PUT, EVENT_TYPE_START, &event, sizeof(event), nullptr, 0);
 
     DDI_CHK_NULL(ctx,                    "nullptr ctx.",                     VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -5022,7 +5415,12 @@ VAStatus DdiMedia_PutImage(
             return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
         }
 
-        VASurfaceID tempSurface = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, vaimg->width, vaimg->height, nullptr, VA_SURFACE_ATTRIB_USAGE_HINT_VPP_READ);
+        int memType = MOS_MEMPOOL_VIDEOMEMORY;
+        if (MEDIA_IS_SKU(&mediaCtx->SkuTable, FtrLocalMemory))
+        {
+            memType = MOS_MEMPOOL_SYSTEMMEMORY;
+        }
+        VASurfaceID tempSurface = (VASurfaceID)DdiMedia_CreateRenderTarget(mediaCtx, mediaFmt, vaimg->width, vaimg->height, nullptr, VA_SURFACE_ATTRIB_USAGE_HINT_VPP_READ, memType);
         if (tempSurface == VA_INVALID_ID)
         {
             return VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -5079,8 +5477,8 @@ VAStatus DdiMedia_PutImage(
             return vaStatus;
         }
 
-        DdiMedia_DestroySurfaces(ctx, &tempSurface, 1);
         vaStatus = DdiMedia_SyncSurface(ctx, tempSurface);
+        DdiMedia_DestroySurfaces(ctx, &tempSurface, 1);
         vaStatus = DdiVp_DestroyContext(ctx, context);
     }
     else
@@ -5151,7 +5549,7 @@ VAStatus DdiMedia_PutImage(
 
         DdiMediaUtil_UnlockSurface(mediaSurface);
     }
-
+    MOS_TraceEventExt(EVENT_VA_PUT, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -5557,6 +5955,54 @@ DdiMedia_QueryProcessingRate(
 }
 
 //!
+//! \brief  media copy internal
+//! 
+//! \param  [in] mosCtx
+//!         Pointer to mos context
+//! \param  [in] src
+//!         VA copy mos resource src.
+//! \param  [in] dst
+//!         VA copy mos resrouce dst.
+//! \param  [in] option
+//!         VA copy option, copy mode.
+//!
+//! \return VAStatus
+//!     VA_STATUS_SUCCESS if success, else fail reason
+//!
+VAStatus
+DdiMedia_CopyInternal(
+    PMOS_CONTEXT            mosCtx,
+    PMOS_RESOURCE           src,
+    PMOS_RESOURCE           dst,
+    uint32_t                copy_mode
+)
+{
+    VAStatus vaStatus = VA_STATUS_SUCCESS;
+    MOS_STATUS mosStatus = MOS_STATUS_UNINITIALIZED;
+    DDI_CHK_NULL(mosCtx, "nullptr mosCtx", VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(src, "nullptr input osResource", VA_STATUS_ERROR_INVALID_SURFACE);
+    DDI_CHK_NULL(dst, "nullptr output osResource", VA_STATUS_ERROR_INVALID_SURFACE);
+
+    MediaCopyBaseState *mediaCopyState = static_cast<MediaCopyBaseState*>(*mosCtx->ppMediaCopyState);
+
+    if (!mediaCopyState)
+    {
+        mediaCopyState = static_cast<MediaCopyBaseState*>(McpyDevice::CreateFactory(mosCtx));
+        *mosCtx->ppMediaCopyState = mediaCopyState;
+    }
+
+    DDI_CHK_NULL(mediaCopyState, "Invalid mediaCopy State", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+    mosStatus = mediaCopyState->SurfaceCopy(src, dst, (MCPY_METHOD)copy_mode);
+    if (mosStatus != MOS_STATUS_SUCCESS)
+    {
+        vaStatus = VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+
+    return vaStatus;
+}
+
+//!
 //! \brief  Check for buffer info
 //! 
 //! \param  [in] ctx
@@ -5650,6 +6096,7 @@ VAStatus DdiMedia_LockSurface (
     void           **buffer )
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_LOCK, EVENT_TYPE_START, &surface, sizeof(surface), nullptr, 0);
 
     DDI_CHK_NULL(ctx,             "nullptr context",         VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(fourcc,          "nullptr fourcc",          VA_STATUS_ERROR_INVALID_PARAMETER);
@@ -5717,6 +6164,7 @@ VAStatus DdiMedia_LockSurface (
     *chroma_v_stride        = tmpImage.pitches[2];
     *buffer_name            = tmpImage.buf;
 
+    MOS_TraceEventExt(EVENT_VA_LOCK, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -5736,6 +6184,7 @@ VAStatus DdiMedia_UnlockSurface (
     VASurfaceID        surface)
 {
     DDI_FUNCTION_ENTER();
+    MOS_TraceEventExt(EVENT_VA_UNLOCK, EVENT_TYPE_START, &surface, sizeof(surface), nullptr, 0);
 
     DDI_CHK_NULL(ctx, "nullptr ctx", VA_STATUS_ERROR_INVALID_CONTEXT);
 
@@ -5768,6 +6217,7 @@ VAStatus DdiMedia_UnlockSurface (
     }
     mediaSurface->uiLockedImageID = VA_INVALID_ID;
 
+    MOS_TraceEventExt(EVENT_VA_UNLOCK, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return VA_STATUS_SUCCESS;
 }
 
@@ -6169,8 +6619,14 @@ static uint32_t DdiMedia_GetPlaneNum(PDDI_MEDIA_SURFACE mediaSurface, bool hasAu
         case VA_FOURCC_VYUY:
         case VA_FOURCC_Y800:
         case VA_FOURCC_Y210:
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y212:
+#endif
         case VA_FOURCC_Y216:
         case VA_FOURCC_Y410:
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FOURCC_Y412:
+#endif
         case VA_FOURCC_Y416:
         case VA_FOURCC_AYUV:
         case VA_FOURCC_RGBA:
@@ -6206,6 +6662,8 @@ static uint32_t DdiMedia_GetDrmFormatOfSeparatePlane(uint32_t fourcc, int plane)
         case VA_FOURCC_YV12:
         case VA_FOURCC_YV16:
         case VA_FOURCC_Y800:
+        case VA_FOURCC_RGBP:
+        case VA_FOURCC_BGRP:
             return DRM_FORMAT_R8;
         case VA_FOURCC_P010:
         case VA_FOURCC_P012:
@@ -6253,6 +6711,8 @@ static uint32_t DdiMedia_GetDrmFormatOfSeparatePlane(uint32_t fourcc, int plane)
         case VA_FOURCC_I420:
         case VA_FOURCC_YV12:
         case VA_FOURCC_YV16:
+        case VA_FOURCC_RGBP:
+        case VA_FOURCC_BGRP:
             return DRM_FORMAT_R8;
         case VA_FOURCC_P010:
         case VA_FOURCC_P012:
@@ -6287,10 +6747,18 @@ static uint32_t DdiMedia_GetDrmFormatOfCompositeObject(uint32_t fourcc)
         return DRM_FORMAT_UYVY;
     case VA_FOURCC_Y210:
         return DRM_FORMAT_Y210;
+#if VA_CHECK_VERSION(1, 9, 0)
+    case VA_FOURCC_Y212:
+        return DRM_FORMAT_Y216;
+#endif
     case VA_FOURCC_Y216:
         return DRM_FORMAT_Y216;
     case VA_FOURCC_Y410:
         return DRM_FORMAT_Y410;
+#if VA_CHECK_VERSION(1, 9, 0)
+    case VA_FOURCC_Y412:
+        return DRM_FORMAT_Y416;
+#endif
     case VA_FOURCC_Y416:
         return DRM_FORMAT_Y416;
     case VA_FOURCC_Y800:
@@ -6390,12 +6858,14 @@ VAStatus DdiMedia_ExportSurfaceHandle(
     desc->num_objects     = 1;
     desc->objects[0].fd   = mediaSurface->name;
     desc->objects[0].size = mediaSurface->pGmmResourceInfo->GetSizeSurface();
+
+    bool bMmcEnabled = (MOS_RESOURCE_MMC_MODE)mediaSurface->pGmmResourceInfo->GetMmcMode(0) != MOS_MMC_DISABLED;
     switch (mediaSurface->TileType) {
     case I915_TILING_X:
         desc->objects[0].drm_format_modifier = I915_FORMAT_MOD_X_TILED;
         break;
     case I915_TILING_Y:
-        if (mediaCtx->m_auxTableMgr)
+        if (mediaCtx->m_auxTableMgr && bMmcEnabled)
         {
             desc->objects[0].drm_format_modifier = I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS;
         }else
@@ -6435,6 +6905,11 @@ VAStatus DdiMedia_ExportSurfaceHandle(
         }
     }
 
+    uint32_t pitch, height, chromaPitch, chromaHeight = 0;
+    pitch = mediaSurface->iPitch;
+    height = mediaSurface->iRealHeight;
+    DdiMedia_GetChromaPitchHeight(desc->fourcc, pitch, height, &chromaPitch, &chromaHeight);
+
     // Get offset from GMM
     GMM_REQ_OFFSET_INFO reqInfo = {0};
     reqInfo.Plane = GMM_PLANE_Y;
@@ -6445,7 +6920,12 @@ VAStatus DdiMedia_ExportSurfaceHandle(
     reqInfo.Plane = GMM_PLANE_U;
     reqInfo.ReqRender = 1;
     mediaSurface->pGmmResourceInfo->GetOffset(reqInfo);
-    uint32_t offsetUV = reqInfo.Render.Offset;
+    uint32_t offsetU = reqInfo.Render.Offset;
+    MOS_ZeroMemory(&reqInfo, sizeof(GMM_REQ_OFFSET_INFO));
+    reqInfo.Plane = GMM_PLANE_V;
+    reqInfo.ReqRender = 1;
+    mediaSurface->pGmmResourceInfo->GetOffset(reqInfo);
+    uint32_t offsetV = reqInfo.Render.Offset;
     uint32_t auxOffsetY = (uint32_t)mediaSurface->pGmmResourceInfo->GetPlanarAuxOffset(0, GMM_AUX_Y_CCS);
     uint32_t auxOffsetUV = (uint32_t)mediaSurface->pGmmResourceInfo->GetPlanarAuxOffset(0, GMM_AUX_UV_CCS);
 
@@ -6473,7 +6953,7 @@ VAStatus DdiMedia_ExportSurfaceHandle(
                 else
                 {
                     // UV plane
-                    desc->layers[0].offset[i] = offsetUV;
+                    desc->layers[0].offset[i] = offsetU;
                     desc->layers[0].pitch[i]  = mediaSurface->iPitch;
                     // UV aux plane
                     desc->layers[0].offset[i + num_planes/2] = auxOffsetUV;
@@ -6485,15 +6965,36 @@ VAStatus DdiMedia_ExportSurfaceHandle(
             for (int i = 0; i < num_planes; i++)
             {
                 desc->layers[0].object_index[i] = 0;
-                if (i == 0)
+                switch(i)
                 {
+                case 0:
                     desc->layers[0].offset[i] = offsetY;
-                    desc->layers[0].pitch[i]  = mediaSurface->iPitch;
-                }
-                else
-                {
-                    desc->layers[0].offset[i] = offsetUV;
-                    desc->layers[0].pitch[i]  = mediaSurface->iPitch;
+                    desc->layers[0].pitch[i]  = pitch;
+                    break;
+                case 1:
+                    if (desc->fourcc == VA_FOURCC_YV12)
+                    {
+                        desc->layers[0].offset[i] = offsetV;
+                    }
+                    else
+                    {
+                        desc->layers[0].offset[i] = offsetU;
+                    }
+                    desc->layers[0].pitch[i]  = chromaPitch;
+                    break;
+                case 2:
+                    if (desc->fourcc == VA_FOURCC_YV12)
+                    {
+                        desc->layers[0].offset[i] = offsetU;
+                    }
+                    else
+                    {
+                        desc->layers[0].offset[i] = offsetV;
+                    }
+                    desc->layers[0].pitch[i]  = chromaPitch;
+                    break;
+                default:
+                    DDI_ASSERTMESSAGE("vaExportSurfaceHandle: invalid plan numbers");
                 }
             }
         }
@@ -6520,7 +7021,7 @@ VAStatus DdiMedia_ExportSurfaceHandle(
                 }
                 else
                 {
-                    desc->layers[i].offset[0] = offsetUV;
+                    desc->layers[i].offset[0] = offsetU;
                     desc->layers[i].offset[1] = auxOffsetUV;
                     desc->layers[i].pitch[0]  = mediaSurface->iPitch;
                     desc->layers[i].pitch[1]  = mediaSurface->iPitch/8;
@@ -6537,15 +7038,36 @@ VAStatus DdiMedia_ExportSurfaceHandle(
 
                 desc->layers[i].object_index[0] = 0;
 
-                if (i == 0)
+                switch(i)
                 {
+                case 0:
                     desc->layers[i].offset[0] = offsetY;
-                    desc->layers[i].pitch[0]  = mediaSurface->iPitch;
-                }
-                else
-                {
-                    desc->layers[i].offset[0] = offsetUV;
-                    desc->layers[i].pitch[0]  = mediaSurface->iPitch;
+                    desc->layers[i].pitch[0]  = pitch;
+                    break;
+                case 1:
+                    if (desc->fourcc == VA_FOURCC_YV12)
+                    {
+                        desc->layers[i].offset[0] = offsetV;
+                    }
+                    else
+                    {
+                        desc->layers[i].offset[0] = offsetU;
+                    }                    
+                    desc->layers[i].pitch[0]  = chromaPitch;
+                    break;
+                case 2:
+                    if (desc->fourcc == VA_FOURCC_YV12)
+                    {
+                        desc->layers[i].offset[0] = offsetU;
+                    }
+                    else
+                    {
+                        desc->layers[i].offset[0] = offsetV;
+                    }
+                    desc->layers[i].pitch[0]  = chromaPitch;
+                    break;
+                default:
+                    DDI_ASSERTMESSAGE("vaExportSurfaceHandle: invalid plan numbers");
                 }
             }
         }
@@ -6607,6 +7129,10 @@ VAStatus __vaDriverInit(VADriverContextP ctx )
     pVTable->vaRenderPicture                 = DdiMedia_RenderPicture;
     pVTable->vaEndPicture                    = DdiMedia_EndPicture;
     pVTable->vaSyncSurface                   = DdiMedia_SyncSurface;
+#if VA_CHECK_VERSION(1, 9, 0)
+    pVTable->vaSyncSurface2                  = DdiMedia_SyncSurface2;
+    pVTable->vaSyncBuffer                    = DdiMedia_SyncBuffer;
+#endif
     pVTable->vaQuerySurfaceStatus            = DdiMedia_QuerySurfaceStatus;
     pVTable->vaQuerySurfaceError             = DdiMedia_QuerySurfaceError;
     pVTable->vaQuerySurfaceAttributes        = DdiMedia_QuerySurfaceAttributes;

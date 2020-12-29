@@ -38,6 +38,8 @@
 #include "vphal.h"
 #include "vp_dumper.h"
 #include "vp_feature_manager.h"
+#include "vp_packet_shared_context.h"
+#include "vp_kernelset.h"
 
 namespace vp
 {
@@ -45,22 +47,39 @@ namespace vp
 class PacketFactory;
 class PacketPipeFactory;
 class VpResourceManager;
+class SwFilterFeatureHandler;
+
+enum PIPELINE_PARAM_TYPE
+{
+    PIPELINE_PARAM_TYPE_LEGACY = 1,
+    PIPELINE_PARAM_TYPE_MEDIA_SFC_INTERFACE,
+};
+
+struct VP_PARAMS
+{
+    PIPELINE_PARAM_TYPE type;
+    union
+    {
+        PVP_PIPELINE_PARAMS renderParams;
+        VEBOX_SFC_PARAMS    *sfcParams;
+    };
+};
 
 class VpPipeline : public MediaPipeline
 {
 public:
-    VpPipeline(PMOS_INTERFACE osInterface, VphalFeatureReport *reporting);
+    VpPipeline(PMOS_INTERFACE osInterface);
 
     virtual ~VpPipeline();
 
     //!
     //! \brief  Initialize the vp pipeline
-    //! \param  [in] settings
-    //!         Pointer to the initialize settings
+    //! \param  [in] mhwInterface
+    //!         Pointer to VP_MHWINTERFACE
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS Init(void *settings) override;
+    virtual MOS_STATUS Init(void *mhwInterface) override;
 
     //!
     //! \brief  Prepare interal parameters, should be invoked for each frame
@@ -96,16 +115,6 @@ public:
     //!
     virtual MOS_STATUS Destroy() override;
 
-
-    //!
-    //! \brief  set mhw interface for vp pipeline
-    //! \param  [in] mhwInterface
-    //!         Pointer to the set mhw interface
-    //! \return MOS_STATUS
-    //!         MOS_STATUS_SUCCESS if success, else fail reason
-    //!
-    virtual MOS_STATUS SetVpPipelineMhwInterfce(void *mhwInterface);
-
     //!
     //! \brief  get Status Report Table
     //! \return PVPHAL_STATUS_TABLE
@@ -113,7 +122,7 @@ public:
     //!
     PVPHAL_STATUS_TABLE GetStatusReportTable()
     {
-        return m_pvpMhwInterface->m_statusTable;
+        return m_vpMhwInterface.m_statusTable;
     }
 
     //!
@@ -122,6 +131,23 @@ public:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     virtual MOS_STATUS UserFeatureReport() override;
+
+    virtual VphalFeatureReport *GetFeatureReport()
+    {
+        return m_reporting;
+    }
+
+    //!
+    //! \brief    Check whether VEBOX-SFC Format Supported
+    //! \details  Check whether VEBOX-SFC Format Supported.
+    //! \param    inputFormat
+    //!           [in] Format of Input Frame
+    //! \param    outputFormat
+    //!           [in] Format of Output Frame
+    //! \return   bool
+    //!           Return true if supported, otherwise failed
+    //!
+    bool IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput);
 
 protected:
 
@@ -132,16 +158,7 @@ protected:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS PrepareVpPipelineParams(void *params);
-
-    //!
-    //! \brief  prepare execution policy for vp pipeline
-    //! \param  [in] params
-    //!         Pointer to VP pipeline params
-    //! \return MOS_STATUS
-    //!         MOS_STATUS_SUCCESS if success, else fail reason
-    //!
-    virtual MOS_STATUS PrepareVpExePipe();
+    virtual MOS_STATUS PrepareVpPipelineParams(PVP_PIPELINE_PARAMS params);
 
     //!
     //! \brief  Execute Vp Pipeline, and generate VP Filters
@@ -149,6 +166,17 @@ protected:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     virtual MOS_STATUS ExecuteVpPipeline();
+
+    //!
+    //! \brief  Create SwFilterPipe
+    //! \param  [in] params
+    //!         Pointer to the input parameters
+    //! \param  [out] swFilterPipe
+    //!         Pointer to swFilterPipe
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS CreateSwFilterPipe(VP_PARAMS &params, SwFilterPipe *&swFilterPipe);
 
     //!
     //! \brief  Get System Vebox Number
@@ -164,6 +192,13 @@ protected:
     //!
     virtual MOS_STATUS CreateFeatureManager() override;
 
+//!
+//! \brief  create media kernel sets
+//! \return MOS_STATUS
+//!         MOS_STATUS_SUCCESS if success, else fail reason
+//!
+    virtual MOS_STATUS CreateVpKernelSets();
+
     //!
     //! \brief  create reource manager
     //! \return MOS_STATUS
@@ -172,19 +207,47 @@ protected:
     virtual MOS_STATUS CreateResourceManager();
     virtual MOS_STATUS CheckFeatures(void *params, bool &bapgFuncSupported);
 
+    //!
+    //! \brief  create packet shared context
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS CreatePacketSharedContext();
+
+    //!
+    //! \brief  create feature report
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS CreateFeatureReport();
+
+    //!
+    //! \brief  set Predication Params
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS SetPredicationParams(PVP_PIPELINE_PARAMS params)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
 protected:
-    PVP_PIPELINE_PARAMS    m_pvpParams              = nullptr;  //!< vp Pipeline params
-    PVP_MHWINTERFACE       m_pvpMhwInterface        = nullptr;  //!< vp Pipeline Mhw Interface
-    VP_EXECUTE_CAPS        m_vpPipelineCaps         = {};       //!< vp Pipeline Engine execute caps
-    VPHAL_OUTPUT_PIPE_MODE m_vpOutputPipe           = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+    VP_PARAMS              m_pvpParams              = {};   //!< vp Pipeline params
+    VP_MHWINTERFACE        m_vpMhwInterface         = {};   //!< vp Pipeline Mhw Interface
+
     uint8_t                m_numVebox               = 0;
     bool                   m_forceMultiplePipe      = false;
     VpAllocator           *m_allocator              = nullptr;  //!< vp Pipeline allocator
     VPMediaMemComp        *m_mmc                    = nullptr;  //!< vp Pipeline mmc
+
+    // For user feature report
     VphalFeatureReport    *m_reporting              = nullptr;  //!< vp Pipeline user feature report
+    VPHAL_OUTPUT_PIPE_MODE m_vpOutputPipe           = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+    bool                   m_veboxFeatureInuse      = false;
+
     VPStatusReport        *m_statusReport           = nullptr;  //!< vp Pipeline status report
     // Surface dumper fields (counter and specification)
-    uint32_t               uiFrameCounter           = 0;
+    uint32_t               m_frameCounter           = 0;
 #if (_DEBUG || _RELEASE_INTERNAL)
     VpSurfaceDumper       *m_surfaceDumper          = nullptr;
     VpParameterDumper     *m_parameterDumper        = nullptr;
@@ -193,7 +256,10 @@ protected:
     PacketFactory         *m_pPacketFactory         = nullptr;
     PacketPipeFactory     *m_pPacketPipeFactory     = nullptr;
     VpResourceManager     *m_resourceManager        = nullptr;
+    VpKernelSet           *m_kernelSet              = nullptr;
     VPFeatureManager      *m_paramChecker           = nullptr;
+    VP_PACKET_SHARED_CONTEXT *m_packetSharedContext = nullptr;
+    VpInterface           *m_vpInterface            = nullptr;
 };
 
 struct _VP_SFC_PACKET_PARAMS
@@ -202,6 +268,94 @@ struct _VP_SFC_PACKET_PARAMS
 };
 
 using VP_SFC_PACKET_PARAMS = _VP_SFC_PACKET_PARAMS;
+
+class VpInterface
+{
+public:
+    VpInterface(PVP_MHWINTERFACE pHwInterface, VpAllocator& allocator, VpResourceManager* resourceManager) :
+        m_swFilterPipeFactory(*this),
+        m_hwFilterPipeFactory(*this),
+        m_hwFilterFactory(*this),
+        m_hwInterface(pHwInterface),
+        m_allocator(allocator),
+        m_resourceManager(resourceManager),
+        m_swFilterHandler(nullptr) // setting when create feature manager
+    {
+    }
+
+    virtual ~VpInterface()
+    {
+    }
+
+    SwFilterPipeFactory& GetSwFilterPipeFactory()
+    {
+        return m_swFilterPipeFactory;
+    }
+
+    void SetSwFilterHandlers(std::map<FeatureType, SwFilterFeatureHandler*>& swFilterHandler)
+    {
+        m_swFilterHandler = &swFilterHandler;
+    }
+
+    SwFilterFeatureHandler* GetSwFilterHandler(FeatureType type)
+    {
+         if (!m_swFilterHandler)
+         {
+             return nullptr;
+         }
+
+        auto handler = m_swFilterHandler->find(type);
+
+        if (handler != m_swFilterHandler->end())
+        {
+            return handler->second;
+        }
+        else
+        {
+            return nullptr;
+        }
+    }
+
+    std::map<FeatureType, SwFilterFeatureHandler*>* GetSwFilterHandlerMap()
+    {
+        return m_swFilterHandler;
+    }
+
+    HwFilterPipeFactory& GetHwFilterPipeFactory()
+    {
+        return m_hwFilterPipeFactory;
+    }
+
+    HwFilterFactory& GetHwFilterFactory()
+    {
+        return m_hwFilterFactory;
+    }
+
+    VpAllocator& GetAllocator()
+    {
+        return m_allocator;
+    }
+
+    VpResourceManager* GetResourceManager()
+    {
+        return m_resourceManager;
+    }
+
+    PVP_MHWINTERFACE GetHwInterface()
+    {
+        return m_hwInterface;
+    }
+
+private:
+    SwFilterPipeFactory m_swFilterPipeFactory;
+    HwFilterPipeFactory m_hwFilterPipeFactory;
+    HwFilterFactory     m_hwFilterFactory;
+
+    PVP_MHWINTERFACE    m_hwInterface;
+    VpAllocator& m_allocator;
+    VpResourceManager* m_resourceManager;
+    std::map<FeatureType, SwFilterFeatureHandler*>* m_swFilterHandler = nullptr;
+};
 }  // namespace vp
 
 #endif

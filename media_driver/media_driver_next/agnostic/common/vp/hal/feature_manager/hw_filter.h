@@ -42,18 +42,19 @@
 #include "vp_rot_mir_filter.h"
 #include "vp_csc_filter.h"
 #include "vp_dn_filter.h"
+#include "vp_tcc_filter.h"
+#include "vp_ste_filter.h"
+#include "vp_procamp_filter.h"
 
 namespace vp
 {
-
-class HwFilter;
 class VpInterface;
 
 enum EngineType
 {
     EngineTypeInvalid = 0,
     EngineTypeVebox,
-    EngineTypeSfc,
+    EngineTypeVeboxSfc,
     EngineTypeRender,
     // ...
     NumOfEngineType
@@ -82,26 +83,16 @@ public:
     virtual MOS_STATUS Initialize(HW_FILTER_PARAMS &param);
     virtual MOS_STATUS SetPacketParams(VpCmdPacket &package) = 0;
 
-    virtual MOS_STATUS ConfigCscParam(HW_FILTER_CSC_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigRotMirParam(HW_FILTER_ROT_MIR_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigScalingParam(HW_FILTER_SCALING_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigDnParam(HW_FILTER_DN_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
+    virtual MOS_STATUS ConfigParam(HW_FILTER_PARAM& param);
 
     EngineType GetEngineType()
     {
         return m_Params.Type;
+    }
+
+    bool IsVeboxFeatureInuse()
+    {
+        return ::IsVeboxFeatureInuse(m_vpExecuteCaps);
     }
 
 protected:
@@ -122,80 +113,22 @@ public:
         return MOS_STATUS_SUCCESS;
     }
     virtual MOS_STATUS SetPacketParams(VpCmdPacket &package);
-    virtual MOS_STATUS ConfigCscParam(HW_FILTER_CSC_PARAM & param)
-    {
-        VpPacketParameter* p = VpVeboxCscParameter::Create(param);
-        VP_PUBLIC_CHK_NULL_RETURN(p);
-        m_Params.Params.push_back(p);
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigRotMirParam(HW_FILTER_ROT_MIR_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigScalingParam(HW_FILTER_SCALING_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigDnParam(HW_FILTER_DN_PARAM &param);
 
 protected:
     HwFilterVebox(VpInterface &vpInterface, EngineType type);
 };
 
-class HwFilterSfc: public HwFilterVebox  // VEBOX+SFC
+class HwFilterVeboxSfc: public HwFilterVebox  // VEBOX+SFC
 {
 public:
-    HwFilterSfc(VpInterface &vpInterface);
-    virtual ~HwFilterSfc();
+    HwFilterVeboxSfc(VpInterface &vpInterface);
+    virtual ~HwFilterVeboxSfc();
     virtual MOS_STATUS Clean()
     {
         HwFilter::Clean();
         return MOS_STATUS_SUCCESS;
     }
     virtual MOS_STATUS SetPacketParams(VpCmdPacket &package);
-    virtual MOS_STATUS ConfigCscParam(HW_FILTER_CSC_PARAM &param)
-    {
-        if (FeatureTypeCscOnSfc == param.type)
-        {
-            VpPacketParameter *p = VpSfcCscParameter::Create(param);
-            VP_PUBLIC_CHK_NULL_RETURN(p);
-            m_Params.Params.push_back(p);
-            return MOS_STATUS_SUCCESS;
-        }
-        else
-        {
-            return HwFilterVebox::ConfigCscParam(param);
-        }
-    }
-    virtual MOS_STATUS ConfigRotMirParam(HW_FILTER_ROT_MIR_PARAM &param)
-    {
-        if (FeatureTypeRotMirOnSfc == param.type)
-        {
-            VpPacketParameter *p = VpSfcRotMirParameter::Create(param);
-            VP_PUBLIC_CHK_NULL_RETURN(p);
-            m_Params.Params.push_back(p);
-            return MOS_STATUS_SUCCESS;
-        }
-        else
-        {
-            return HwFilterVebox::ConfigRotMirParam(param);
-        }
-    }
-    virtual MOS_STATUS ConfigScalingParam(HW_FILTER_SCALING_PARAM &param)
-    {
-        if (FeatureTypeScalingOnSfc == param.type)
-        {
-            VpPacketParameter *p = VpSfcScalingParameter::Create(param);
-            VP_PUBLIC_CHK_NULL_RETURN(p);
-            m_Params.Params.push_back(p);
-            return MOS_STATUS_SUCCESS;
-        }
-        else
-        {
-            return HwFilterVebox::ConfigScalingParam(param);
-        }
-    }
 };
 
 class HwFilterRender: public HwFilter
@@ -211,18 +144,6 @@ public:
     }
 
     virtual MOS_STATUS SetPacketParams(VpCmdPacket &package);
-    virtual MOS_STATUS ConfigCscParam(HW_FILTER_CSC_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigRotMirParam(HW_FILTER_ROT_MIR_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-    virtual MOS_STATUS ConfigScalingParam(HW_FILTER_SCALING_PARAM &)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
 };
 
 }

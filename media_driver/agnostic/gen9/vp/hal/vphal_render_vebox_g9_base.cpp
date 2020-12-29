@@ -468,6 +468,9 @@ MOS_STATUS VPHAL_VEBOX_STATE_G9_BASE::AllocateResources()
 
             pVeboxState->FFDISurfaces[i]->ColorSpace = ColorSpace;
 
+            // Copy ScalingMode, it's used in setting SFC state
+            pVeboxState->FFDISurfaces[i]->ScalingMode = pVeboxState->m_currentSurface->ScalingMode;
+
             if (bAllocated)
             {
                 // Report Compress Status
@@ -559,6 +562,8 @@ MOS_STATUS VPHAL_VEBOX_STATE_G9_BASE::AllocateResources()
             // Copy FrameID and parameters, as DN output will be used as next blt's current
             pVeboxState->FFDNSurfaces[i]->FrameID            = pVeboxState->m_currentSurface->FrameID;
             pVeboxState->FFDNSurfaces[i]->pDenoiseParams     = pVeboxState->m_currentSurface->pDenoiseParams;
+            // Copy ScalingMode, it's used in setting SFC state
+            pVeboxState->FFDNSurfaces[i]->ScalingMode        = pVeboxState->m_currentSurface->ScalingMode;
 
             if (bAllocated)
             {
@@ -665,6 +670,8 @@ MOS_STATUS VPHAL_VEBOX_STATE_G9_BASE::AllocateResources()
         pVeboxState->m_BT2020CSCTempSurface.Rotation   = pVeboxState->m_currentSurface->Rotation;
         pVeboxState->m_BT2020CSCTempSurface.SampleType = pVeboxState->m_currentSurface->SampleType;
         pVeboxState->m_BT2020CSCTempSurface.ColorSpace = CSpace_sRGB;
+        // Copy ScalingMode, it's used in setting SFC state
+        pVeboxState->m_BT2020CSCTempSurface.ScalingMode = pVeboxState->m_currentSurface->ScalingMode;
     }
 
     // Allocate Statistics State Surface----------------------------------------
@@ -1757,6 +1764,23 @@ bool VPHAL_VEBOX_STATE_G9_BASE::IsNeeded(
             pSrcSurface,
             &pRenderPassData->bCompNeeded));
 
+    //If using Vebox to Crop, setting the bVEBOXCroppingUsed = true. We use the rcSrc to set Vebox width/height instead of using rcMaxsrc in VeboxAdjustBoundary().
+    if (IS_VPHAL_OUTPUT_PIPE_VEBOX(pRenderData) &&
+        ((uint32_t)pSrcSurface->rcSrc.bottom < pSrcSurface->dwHeight ||
+            (uint32_t)pSrcSurface->rcSrc.right < pSrcSurface->dwWidth))
+    {
+        pSrcSurface->bVEBOXCroppingUsed = true;
+        VPHAL_RENDER_NORMALMESSAGE("bVEBOXCroppingUsed = true, pSrcSurface->rcSrc.bottom: %d, pSrcSurface->rcSrc.right: %d; pSrcSurface->dwHeight: %d, pSrcSurface->dwHeight: %d;",
+            (uint32_t)pSrcSurface->rcSrc.bottom,
+            (uint32_t)pSrcSurface->rcSrc.right,
+            pSrcSurface->dwHeight,
+            pSrcSurface->dwWidth);
+    }
+    else
+    {
+        pSrcSurface->bVEBOXCroppingUsed = false;
+    }
+
     // Set MMC State
     SET_VPHAL_MMC_STATE(pRenderData, pVeboxState->bEnableMMC);
 
@@ -2184,7 +2208,11 @@ bool VPHAL_VEBOX_STATE_G9_BASE::IsFormatSupported(
         pSrcSurface->Format != Format_Y8   &&
         pSrcSurface->Format != Format_Y16U &&
         pSrcSurface->Format != Format_Y16S &&
-        !IS_PA_FORMAT(pSrcSurface->Format))
+        (!IS_PA_FORMAT(pSrcSurface->Format) ||
+         pSrcSurface->Format == Format_Y410 ||    // Gen9 can't support Y410/Y416/Y210/Y216 Format
+         pSrcSurface->Format == Format_Y416 ||
+         pSrcSurface->Format == Format_Y210 ||
+         pSrcSurface->Format == Format_Y216))
     {
         VPHAL_RENDER_NORMALMESSAGE("Unsupported Source Format '0x%08x' for VEBOX.", pSrcSurface->Format);
         goto finish;

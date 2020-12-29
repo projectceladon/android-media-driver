@@ -97,7 +97,9 @@ struct MHW_VDBOX_VD_PIPE_FLUSH_PARAMS_G12
             uint16_t       bFlushVDENC              : 1;
             uint16_t       bFlushMFL                : 1;
             uint16_t       bFlushMFX                : 1;
-            uint16_t                                : 7;
+            uint16_t       bWaitDoneAV1             : 1;
+            uint16_t       bFlushAV1                : 1;
+            uint16_t                                : 5;
         };
         struct
         {
@@ -180,7 +182,8 @@ protected:
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_ROWSTORE_CACHE_DISABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            this->m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
         this->m_rowstoreCachingSupported = userFeatureData.i32Data ? false : true;
 
@@ -191,7 +194,8 @@ protected:
             MOS_UserFeature_ReadValue_ID(
                 nullptr,
                 __MEDIA_USER_FEATURE_VALUE_VDENCROWSTORECACHE_DISABLE_ID,
-                &userFeatureData);
+                &userFeatureData,
+                this->m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
             this->m_vdencRowStoreCache.bSupported = userFeatureData.i32Data ? false : true;
         }
@@ -347,6 +351,8 @@ protected:
         cmd.DW1.VdencPipelineCommandFlush  = params->Flags.bFlushVDENC;
         cmd.DW1.MflPipelineCommandFlush    = params->Flags.bFlushMFL;
         cmd.DW1.MfxPipelineCommandFlush    = params->Flags.bFlushMFX;
+        cmd.DW1.AvpPipelineDone            = paramsG12->Flags.bWaitDoneAV1;
+        cmd.DW1.AvpPipelineCommandFlush    = paramsG12->Flags.bFlushAV1;
 
         MHW_MI_CHK_STATUS(Mos_AddCommand(cmdBuffer, &cmd, sizeof(cmd)));
 
@@ -1552,8 +1558,6 @@ public:
         cmd.DW22.Largembsizeinword                   = 0xff;
         cmd.DW27.MaxHmvR                             = 0x2000;
         cmd.DW27.MaxVmvR                             = 0x200;
-        cmd.DW33.MaxQp                               = 0x33;
-        cmd.DW33.MinQp                               = 0x0a;
         cmd.DW33.Maxdeltaqp                          = 0x0f;
 
         // initialize for P frame
@@ -1699,6 +1703,19 @@ public:
             }
         }
 
+        // Setting MinMaxQP values if they are presented
+        if (avcPicParams->ucMaximumQP && avcPicParams->ucMinimumQP)
+        {
+            cmd.DW33.MaxQp = avcPicParams->ucMaximumQP;
+            cmd.DW33.MinQp = avcPicParams->ucMinimumQP;
+        }
+        else
+        {
+            // Set default values
+            cmd.DW33.MaxQp = 0x33;
+            cmd.DW33.MinQp = 0x0a;
+        }
+
         // VDEnc CQP case ROI settings, BRC ROI will be handled in HuC FW
         if (!params->bVdencBRCEnabled && avcPicParams->NumROI)
         {
@@ -1745,8 +1762,7 @@ public:
             cmd.DW34.FwdPredictor0MvEnable = 1;
             cmd.DW34.PpmvDisable           = 1;
 
-            if ((!params->bVdencBRCEnabled && avcPicParams->EnableRollingIntraRefresh == ROLLING_I_DISABLED)
-                && ((avcPicParams->NumROI && !avcPicParams->bNativeROI) || paramsG12->bStreamInMbQpEnabled))
+            if (!params->bVdencBRCEnabled && avcPicParams->EnableRollingIntraRefresh == ROLLING_I_DISABLED && paramsG12->bStreamInMbQpEnabled)
             {
                 cmd.DW34.MbLevelQpEnable = 1;
             }
@@ -1985,20 +2001,20 @@ public:
                 //StreamIn data is 4 CLs per LCU
                 cmd.DW6.TileStreaminOffset = (tileStartYInSBs * frameWidthInSBs + tileStartXInSBs * tileHeightInSBs) * (4);
 
-                // If Tile Column, compute PAK Object StreamOut Offsets
-                uint32_t tileLCUStreamOutOffsetInBytes = 0;
+                //Compute PAK Object StreamOut Offsets
+                uint32_t tileLCUStreamOutOffsetInCachelines = 0;
                 if (cmd.DW4.TileStartCtbY != 0 || cmd.DW4.TileStartCtbX != 0)
                 {
                     //Aligned Tile width & frame height
                     uint32_t numOfSBs = tileStartYInSBs * frameWidthInSBs + tileStartXInSBs * tileHeightInSBs;
                     //max LCU size is 64, min Cu size is 8
-                    uint32_t maxNumOfCUInSB = (CODEC_VP9_SUPER_BLOCK_HEIGHT / CODEC_VP9_MIN_BLOCK_HEIGHT) *
-                        (CODEC_VP9_SUPER_BLOCK_WIDTH / CODEC_VP9_MIN_BLOCK_WIDTH);
-                    tileLCUStreamOutOffsetInBytes = 2 * BYTES_PER_DWORD * numOfSBs * (NUM_PAK_DWS_PER_LCU + maxNumOfCUInSB * NUM_DWS_PER_CU);
+                    uint32_t maxNumOfCUInSB = (CODEC_VP9_SUPER_BLOCK_HEIGHT / CODEC_VP9_MIN_BLOCK_HEIGHT) * (CODEC_VP9_SUPER_BLOCK_WIDTH / CODEC_VP9_MIN_BLOCK_WIDTH);
+                    //(num of SBs in a tile) *  (num of cachelines needed per SB)
+                    tileLCUStreamOutOffsetInCachelines = numOfSBs * (MOS_ROUNDUP_DIVIDE((2 * BYTES_PER_DWORD * (NUM_PAK_DWS_PER_LCU + maxNumOfCUInSB * NUM_DWS_PER_CU)), MHW_CACHELINE_SIZE));
                 }
 
                 cmd.DW9.LcuStreamOutOffsetEnable = 1;
-                cmd.DW9.TileLcuStreamOutOffset = MOS_ROUNDUP_DIVIDE(tileLCUStreamOutOffsetInBytes, MHW_CACHELINE_SIZE);
+                cmd.DW9.TileLcuStreamOutOffset = tileLCUStreamOutOffsetInCachelines;
 
                 if (cmd.DW4.TileStartCtbY == 0)
                 {
@@ -2583,17 +2599,18 @@ public:
 
             if (params->bUseDefaultQpDeltas)
             {
+                cmd.DW13.Value = (cmd.DW13.Value & 0xffff) | 0xf0120000;
                 if (hevcPicParams->CodingType == I_TYPE)
                 {
                     cmd.DW14.Value = (cmd.DW14.Value & 0xffff0000) | 0x21db;
-                    cmd.DW16.Value = (cmd.DW16.Value & 0xf00ffff) | 0x1f0000;
+                    cmd.DW16.Value = (cmd.DW16.Value & 0xf00ffff) | 0x10000;
                     cmd.DW18.Value = 0x600000;
                     cmd.DW19.Value = (cmd.DW19.Value & 0xffff0000) | 0xc0;
                 }
                 else // LDB frames
                 {
                     cmd.DW14.Value = (cmd.DW14.Value & 0xffff0000) | 0x21ed;
-                    cmd.DW16.Value = (cmd.DW16.Value & 0xf00ffff) | 0xd01f0000;
+                    cmd.DW16.Value = (cmd.DW16.Value & 0xf00ffff) | 0xd0010000;
                     cmd.DW18.Value = 0x60010f;
                     cmd.DW19.Value = (cmd.DW19.Value & 0xffff0000) | 0xc0;
                 }
@@ -2735,8 +2752,8 @@ public:
             MHW_MI_CHK_NULL(params->pVp9EncSeqParams);
             auto vp9SeqParams = params->pVp9EncSeqParams;
 
-            cmd.DW1.FrameWidthInPixelsMinusOne = MOS_ALIGN_CEIL(vp9PicParams->SrcFrameWidthMinus1, CODEC_VP9_MIN_BLOCK_WIDTH) - 1;
-            cmd.DW1.FrameHeightInPixelsMinusOne = MOS_ALIGN_CEIL(vp9PicParams->SrcFrameHeightMinus1, CODEC_VP9_MIN_BLOCK_WIDTH) - 1;
+            cmd.DW1.FrameWidthInPixelsMinusOne = MOS_ALIGN_CEIL(vp9PicParams->SrcFrameWidthMinus1 + 1, CODEC_VP9_MIN_BLOCK_WIDTH) - 1;
+            cmd.DW1.FrameHeightInPixelsMinusOne = MOS_ALIGN_CEIL(vp9PicParams->SrcFrameHeightMinus1 + 1, CODEC_VP9_MIN_BLOCK_WIDTH) - 1;
 
             cmd.DW2.Value = (cmd.DW2.Value & 0x8ff00000) | 0x5aff3;
             cmd.DW5.Value = (cmd.DW5.Value & 0xf000300) | 0x80ac00;

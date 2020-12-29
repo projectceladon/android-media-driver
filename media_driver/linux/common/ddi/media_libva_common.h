@@ -93,7 +93,7 @@ static int32_t atrace_switch            = 0;
 
 #define DDI_MEDIA_VACONTEXTID_OFFSET_DECODER       0x10000000
 #define DDI_MEDIA_VACONTEXTID_OFFSET_ENCODER       0x20000000
-#define DDI_MEDIA_VACONTEXTID_OFFSET_CENC          0x30000000
+#define DDI_MEDIA_VACONTEXTID_OFFSET_PROT          0x30000000
 #define DDI_MEDIA_VACONTEXTID_OFFSET_VP            0x40000000
 #define DDI_MEDIA_VACONTEXTID_OFFSET_MFE           0x70000000
 #define DDI_MEDIA_VACONTEXTID_OFFSET_CM            0x80000000
@@ -105,7 +105,7 @@ static int32_t atrace_switch            = 0;
 #define DDI_MEDIA_CONTEXT_TYPE_VP                  3
 #define DDI_MEDIA_CONTEXT_TYPE_MEDIA               4
 #define DDI_MEDIA_CONTEXT_TYPE_CM                  5
-#define DDI_MEDIA_CONTEXT_TYPE_CENC_DECODER        6
+#define DDI_MEDIA_CONTEXT_TYPE_PROTECTED           6
 #define DDI_MEDIA_CONTEXT_TYPE_MFE                 7
 #define DDI_MEDIA_CONTEXT_TYPE_NONE                0
 
@@ -192,6 +192,10 @@ typedef enum _DDI_MEDIA_FORMAT
     Media_Format_A16R16G16B16,
     Media_Format_A16B16G16R16,
     Media_Format_P012        ,
+#if VA_CHECK_VERSION(1, 9, 0)
+    Media_Format_Y212        ,
+    Media_Format_Y412        ,
+#endif
     Media_Format_Count
 } DDI_MEDIA_FORMAT;
 
@@ -263,6 +267,7 @@ typedef union _DDI_MEDIA_SURFACE_STATUS_REPORT
     } vpp;
 } DDI_MEDIA_SURFACE_STATUS_REPORT, *PDDI_MEDIA_SURFACE_STATUS_REPORT;
 
+struct _DDI_MEDIA_BUFFER;
 typedef struct _DDI_MEDIA_SURFACE
 {
     // for hwcomposer, remove this after we have a solution
@@ -300,10 +305,12 @@ typedef struct _DDI_MEDIA_SURFACE
     PMEDIA_SEM_T            pReferenceFrameSemaphore; // to sync reference frame surface. when this semaphore is posted, the surface is not used as reference frame, and safe to be destroied
 
     uint8_t                 *pSystemShadow;           // Shadow surface in system memory
+    _DDI_MEDIA_BUFFER       *pShadowBuffer;
 
     uint32_t                uiMapFlag;
 
     uint32_t                uiVariantFlag;
+    int                     memType;
 } DDI_MEDIA_SURFACE, *PDDI_MEDIA_SURFACE;
 
 typedef struct _DDI_MEDIA_BUFFER
@@ -331,6 +338,7 @@ typedef struct _DDI_MEDIA_BUFFER
     bool                   bPostponedBufFree;
 
     bool                   bCFlushReq; // No LLC between CPU & GPU, requries to call CPU Flush for CPU mapped buffer
+    bool                   bUseSysGfxMem;
     PDDI_MEDIA_SURFACE     pSurface;
     GMM_RESOURCE_INFO     *pGmmResourceInfo; // GMM resource descriptor
     PDDI_MEDIA_CONTEXT     pMediaCtx; // Media driver Context
@@ -423,6 +431,9 @@ struct DDI_MEDIA_CONTEXT
     PDDI_MEDIA_HEAP     pVpCtxHeap;
     uint32_t            uiNumVPs;
 
+    PDDI_MEDIA_HEAP     pProtCtxHeap;
+    uint32_t            uiNumProts;
+
     PDDI_MEDIA_HEAP     pCmCtxHeap;
     uint32_t            uiNumCMs;
 
@@ -454,6 +465,7 @@ struct DDI_MEDIA_CONTEXT
     MEDIA_MUTEX_T       DecoderMutex;
     MEDIA_MUTEX_T       EncoderMutex;
     MEDIA_MUTEX_T       VpMutex;
+    MEDIA_MUTEX_T       ProtMutex;
     MEDIA_MUTEX_T       CmMutex;
     MEDIA_MUTEX_T       MfeMutex;
 
@@ -462,6 +474,9 @@ struct DDI_MEDIA_CONTEXT
 
     // Media memory decompression data structure
     void               *pMediaMemDecompState;
+
+    // Media copy data structure
+    void               *pMediaCopyState;
 
     // Media memory decompression function
     void (* pfnMemoryDecompress)(
@@ -489,6 +504,29 @@ struct DDI_MEDIA_CONTEXT
         uint32_t           copyInputOffset,
         uint32_t           copyOutputOffset,
         bool               bOutputCompressed);
+
+    //!
+    //! \brief  the function ptr for Media copy function
+    //!
+    MOS_STATUS (* pfnMediaCopy)(
+        PMOS_CONTEXT       pMosCtx,
+        PMOS_RESOURCE      pInputResource,
+        PMOS_RESOURCE      pOutputResource,
+        uint32_t           copyMode);
+
+    //!
+    //! \brief  the function ptr for Media Tile Convert function
+    //!
+    VAStatus (* pfnMediaMemoryTileConvert)(
+        PMOS_CONTEXT       pMosCtx,
+        PMOS_RESOURCE      pInputResource,
+        PMOS_RESOURCE      pOutputResource,
+        uint32_t           copyWidth,
+        uint32_t           copyHeight,
+        uint32_t           copyInputOffset,
+        uint32_t           copyOutputOffset,
+        bool               isTileToLinear,
+        bool               outputCompressed);
 
     PLATFORM            platform;
 

@@ -119,13 +119,13 @@ MOS_STATUS CodechalDecodeVc1G12::SetFrameStates()
 
 #ifdef _MMC_SUPPORTED
     // To WA invalid aux data caused HW issue when MMC on
-    if (m_mmc && m_mmc->IsMmcEnabled() && MEDIA_IS_WA(m_waTable, Wa_1408785368) && 
-        !Mos_ResourceIsNull(&m_destSurface.OsResource) && 
+    if (m_mmc && m_mmc->IsMmcEnabled() && (MEDIA_IS_WA(m_waTable, Wa_1408785368) || MEDIA_IS_WA(m_waTable, Wa_22010493002)) &&
+        !Mos_ResourceIsNull(&m_destSurface.OsResource) &&
         m_destSurface.OsResource.bConvertedFromDDIResource)
     {
         CODECHAL_DECODE_VERBOSEMESSAGE("Clear CCS by VE resolve before frame %d submission", m_frameNum);
-        CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnDecompResource(m_osInterface, &m_destSurface.OsResource));
-        CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnSetGpuContext(m_osInterface, m_videoContext));
+        CODECHAL_DECODE_CHK_STATUS_RETURN(static_cast<CodecHalMmcStateG12 *>(m_mmc)->ClearAuxSurf(
+            this, m_miInterface, &m_destSurface.OsResource, m_veState));
     }
 
     bool isBPicture = m_mfxInterface->IsVc1BPicture(
@@ -1295,6 +1295,17 @@ MOS_STATUS CodechalDecodeVc1G12::PerformVc1Olp()
 
     CODECHAL_DECODE_FUNCTION_ENTER;
 
+#ifdef _MMC_SUPPORTED
+    // To Clear invalid aux data of output surface when MMC on
+    if (m_mmc && m_mmc->IsMmcEnabled() &&
+        !Mos_ResourceIsNull(&m_deblockSurface.OsResource) &&
+        m_deblockSurface.OsResource.bConvertedFromDDIResource)
+    {
+        CODECHAL_DECODE_VERBOSEMESSAGE("Clear invalid aux data of output surface before frame %d submission", m_frameNum);
+        CODECHAL_DECODE_CHK_STATUS_RETURN(static_cast<CodecHalMmcStateG12 *>(m_mmc)->ClearAuxSurf(
+            this, m_miInterface, &m_deblockSurface.OsResource, m_veState));
+    }
+#endif
     MhwRenderInterface *renderEngineInterface = m_hwInterface->GetRenderInterface();
     PMHW_KERNEL_STATE         kernelState           = &m_olpKernelState;
     PMHW_STATE_HEAP_INTERFACE stateHeapInterface = renderEngineInterface->m_stateHeapInterface;
@@ -1513,18 +1524,12 @@ MOS_STATUS CodechalDecodeVc1G12::PerformVc1Olp()
 
     // Add PipeControl to invalidate ISP and MediaState to avoid PageFault issue
     // This code is temporal and it will be moved to batch buffer end in short
-    if (GFX_IS_GEN_9_OR_LATER(m_hwInterface->GetPlatform()))
-    {
-        MHW_PIPE_CONTROL_PARAMS pipeControlParams;
-
-        MOS_ZeroMemory(&pipeControlParams, sizeof(pipeControlParams));
-        pipeControlParams.dwFlushMode = MHW_FLUSH_WRITE_CACHE;
-        pipeControlParams.bGenericMediaStateClear = true;
-        pipeControlParams.bIndirectStatePointersDisable = true;
-        pipeControlParams.bDisableCSStall = false;
-        CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddPipeControl(&cmdBuffer, nullptr, &pipeControlParams));
-
-    }
+    MOS_ZeroMemory(&pipeControlParams, sizeof(pipeControlParams));
+    pipeControlParams.dwFlushMode = MHW_FLUSH_WRITE_CACHE;
+    pipeControlParams.bGenericMediaStateClear = true;
+    pipeControlParams.bIndirectStatePointersDisable = true;
+    pipeControlParams.bDisableCSStall = false;
+    CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddPipeControl(&cmdBuffer, nullptr, &pipeControlParams));
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddMiBatchBufferEnd(&cmdBuffer, nullptr));
 

@@ -34,7 +34,7 @@ MOS_STATUS CodechalVdencAvcStateG11JslEhl::Initialize(CodechalSetting* settings)
     CODECHAL_ENCODE_FUNCTION_ENTER;
 
     // common initilization
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalVdencAvcState::Initialize(settings));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalVdencAvcStateG11LP::Initialize(settings));
     m_cscDsState->DisableSfc(); // EHL and JSL don't support SFC
 
     return eStatus;

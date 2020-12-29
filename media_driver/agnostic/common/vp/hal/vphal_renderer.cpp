@@ -1212,14 +1212,6 @@ MOS_STATUS VphalRenderer::Render(
         VPHAL_RENDER_CHK_STATUS(RenderPass(&RenderParams));
     }
 
-#if defined(LINUX)
-    if (m_reporting)
-    {
-        WriteUserFeature(__VPHAL_VEBOX_OUTPUTPIPE_MODE_ID, m_reporting->OutputPipeMode);
-        WriteUserFeature(__VPHAL_VEBOX_FEATURE_INUSE_ID, m_reporting->VEFeatureInUse);
-    }
-#endif
-
 finish:
     uiFrameCounter++;
     return eStatus;
@@ -1780,7 +1772,8 @@ VphalRenderer::VphalRenderer(
     eStatus = MOS_UserFeature_ReadValue_ID(
             nullptr,
             __VPHAL_RNDR_SSD_CONTROL_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_pOsInterface->pOsContext);
     if (eStatus == MOS_STATUS_SUCCESS)
     {
         uiSsdControl = UserFeatureData.u32Data;

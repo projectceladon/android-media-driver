@@ -307,7 +307,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_HW_SCOREBOARD_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
         m_useHwScoreboard = (UserFeatureData.i32Data) ? true : false;
 
         // HME enabled by default for VP8
@@ -315,7 +316,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_ENCODE_ME_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
 
         m_hmeSupported = (UserFeatureData.i32Data) ? true : false;
 
@@ -323,7 +325,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_ENCODE_16xME_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
 
         m_16xMeSupported = (UserFeatureData.i32Data) ? true : false;
 
@@ -338,7 +341,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_ENCODE_REPAK_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
         m_repakSupported = (UserFeatureData.i32Data) ? true : false;
 
         // Adaptive RePAK enabled by default
@@ -348,7 +352,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_ENCODE_ADAPTIVE_REPAK_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
         m_adaptiveRepakSupported = (UserFeatureData.i32Data) ? true : false;
 #endif // _DEBUG || _RELEASE_INTERNAL
 
@@ -356,7 +361,8 @@ MOS_STATUS CodechalEncodeVp8::Initialize(CodechalSetting * codecHalSettings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_VP8_ENCODE_MULTIPASS_BRC_ENABLE_ID,
-            &UserFeatureData);
+            &UserFeatureData,
+            m_osInterface->pOsContext);
         m_multipassBrcSupported = (UserFeatureData.i32Data) ? true : false;
     }
 
@@ -3429,15 +3435,16 @@ MOS_STATUS CodechalEncodeVp8::ExecutePictureLevel()
         // of the BB and keep the current frame's tag at the end of the BB. There will be a delay for tag update but it should be fine
         // as long as Dec/VP/Enc won't depend on this PAK so soon.
         MHW_MI_STORE_DATA_PARAMS                        Params;
-        MOS_RESOURCE                                    resGlobalGpuContextSyncTagBuffer;
-        uint32_t                                           dwValue;
+        PMOS_RESOURCE                                   resGlobalGpuContextSyncTagBuffer = nullptr;
+        uint32_t                                        dwValue;
 
         CODECHAL_HW_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
             m_osInterface,
-            &resGlobalGpuContextSyncTagBuffer));
+            resGlobalGpuContextSyncTagBuffer));
+        CODECHAL_HW_CHK_NULL_RETURN(resGlobalGpuContextSyncTagBuffer);
 
         dwValue = m_osInterface->pfnGetGpuStatusTag(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
-        Params.pOsResource = &resGlobalGpuContextSyncTagBuffer;
+        Params.pOsResource = resGlobalGpuContextSyncTagBuffer;
         Params.dwResourceOffset = m_osInterface->pfnGetGpuStatusTagOffset(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         Params.dwValue = (dwValue > 0) ? (dwValue - 1) : 0;
         CODECHAL_HW_CHK_STATUS_RETURN(m_hwInterface->GetMiInterface()->AddMiStoreDataImmCmd(&cmdBuffer, &Params));
@@ -3942,7 +3949,7 @@ MOS_STATUS CodechalEncodeVp8::ExecuteSliceLevel()
 
     CODECHAL_DEBUG_TOOL(
         if (!m_mmcUserFeatureUpdated) {
-            CODECHAL_UPDATE_ENCODE_MMC_USER_FEATURE(m_reconSurface);
+            CODECHAL_UPDATE_ENCODE_MMC_USER_FEATURE(m_reconSurface, m_osInterface);
             m_mmcUserFeatureUpdated = true;
         })
 

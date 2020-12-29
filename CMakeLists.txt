@@ -20,7 +20,7 @@
 
 cmake_minimum_required(VERSION 3.5)
 
-set(MEDIA_VERSION "20.2.0${MEDIA_VERSION_EXTRA}" CACHE STRING "" FORCE)
+set(MEDIA_VERSION "20.3.0${MEDIA_VERSION_EXTRA}" CACHE STRING "" FORCE)
 
 include(os_release_info.cmake)
 
@@ -49,6 +49,8 @@ cmake_dependent_option( BUILD_KERNELS
     "Rebuild shaders (kernels) from sources" OFF
     "ENABLE_KERNELS;NOT ENABLE_NONFREE_KERNELS" OFF)
 option (BUILD_CMRTLIB "Build and Install cmrtlib together with media driver" ON)
+
+option (ENABLE_PRODUCTION_KMD "Enable Production KMD header files" OFF)
 
 include(GNUInstallDirs)
 
@@ -137,3 +139,4 @@ endif()
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${DISTRO_INFO}-${PACKAGE_TYPE}")
 
 include(CPack)
+

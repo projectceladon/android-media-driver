@@ -1486,6 +1486,7 @@ bool CompositeState::PreparePhases(
             AllocParams.dwWidth  = dwTempWidth;
             AllocParams.dwHeight = dwTempHeight;
             AllocParams.Format   = Format_A8R8G8B8;
+            AllocParams.ResUsageType = MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_WRITE_RENDER;
 
             pOsInterface->pfnAllocateResource(
                 pOsInterface,
@@ -1549,6 +1550,7 @@ bool CompositeState::PreparePhases(
             AllocParams.dwWidth  = dwTempWidth;
             AllocParams.dwHeight = dwTempHeight;
             AllocParams.Format   = Format_A8R8G8B8;
+            AllocParams.ResUsageType = MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_WRITE_RENDER;
 
             pOsInterface->pfnAllocateResource(
                 pOsInterface,
@@ -2221,6 +2223,9 @@ MOS_STATUS CompositeState::Render(
 
         VPHAL_RENDER_ASSERT(!Mos_ResourceIsNull(&pSrc->OsResource));
 
+        //update resource usage type
+        pOsInterface->pfnUpdateResourceUsageType(&pSrc->OsResource, MOS_HW_RESOURCE_USAGE_VP_INPUT_PICTURE_RENDER);
+
         // Get resource information
         MOS_ZeroMemory(&Info, sizeof(VPHAL_GET_SURFACE_INFO));
 
@@ -2239,6 +2244,9 @@ MOS_STATUS CompositeState::Render(
         // Field Weaving needs ref sample
         if (pSrc->bFieldWeaving && pSrc->pBwdRef)
         {
+            //update resource usage type
+            pOsInterface->pfnUpdateResourceUsageType(&pSrc->OsResource, MOS_HW_RESOURCE_USAGE_VP_INPUT_REFERENCE_RENDER);
+
             MOS_ZeroMemory(&Info, sizeof(VPHAL_GET_SURFACE_INFO));
 
             VPHAL_RENDER_CHK_STATUS(VpHal_GetSurfaceInfo(
@@ -2285,6 +2293,9 @@ MOS_STATUS CompositeState::Render(
     index = 0;
     do
     {
+        //update resource usage type
+        pOsInterface->pfnUpdateResourceUsageType(&pcRenderParams->pTarget[index]->OsResource, MOS_HW_RESOURCE_USAGE_VP_OUTPUT_PICTURE_RENDER);
+
         pOsInterface->pfnSyncOnResource(
             pOsInterface,
             &pcRenderParams->pTarget[index]->OsResource,
@@ -3120,6 +3131,26 @@ int32_t CompositeState::SetLayer(
         dwDestRectHeight = pRenderingData->pTarget[1]->dwHeight;
     }
 
+    if (pSource->bXORComp)
+    {
+        // re-define the layer format, scaling mode.
+        // for RGBP format, plane order is UVY, offset should be modified to match it.
+        // only support cursor layer width == 4.
+        if (pSource->dwWidth != 4)
+        {
+            VPHAL_RENDER_ASSERTMESSAGE("XOR layer invalid width size.");
+            iResult = -1;
+            goto finish;
+        }
+
+        pSource->Format = Format_RGBP;
+        pSource->TileType = MOS_TILE_LINEAR;
+        pSource->ScalingMode = VPHAL_SCALING_NEAREST;
+        pSource->UPlaneOffset.iSurfaceOffset = 0;
+        pSource->VPlaneOffset.iSurfaceOffset = pSource->dwWidth*pSource->dwHeight;
+        pSource->dwPitch = pSource->dwPitch/(4*8);
+    }
+
     // Source rectangle is pre-rotated, destination rectangle is post-rotated.
     if (pSource->Rotation == VPHAL_ROTATION_IDENTITY    ||
         pSource->Rotation == VPHAL_ROTATION_180         ||
@@ -3803,6 +3834,14 @@ int32_t CompositeState::SetLayer(
     pDPStatic->DW7.DestinationRectangleWidth = dwDestRectWidth;
     pDPStatic->DW7.DestinationRectangleHeight = dwDestRectHeight;
 
+    if (pSource->bXORComp)
+    {
+        // set mono-chroma XOR composite specific curbe data. re-calculate fStep due to 1 bit = 1 pixel.
+        pStatic->DW10.ObjKa2Gen9.MonoXORCompositeMask = pSource->rcDst.left & 0x7;
+        fStepX /= 8;
+        fOriginX /= 8;
+    }
+
     switch (iLayer)
     {
         case 0:
@@ -4431,6 +4470,8 @@ bool CompositeState::SubmitStates(
     }
 
     iInlineLength = CalculateInlineDataSize(pRenderingData, pStatic);
+
+    UpdateInlineDataStatus(pRenderingData->pLayers[0], pStatic);
 
     // Set Background color (use cspace of first layer)
     if (pRenderingData->pColorFill)
@@ -5478,6 +5519,13 @@ bool CompositeState::RenderBufferMediaWalker(
          iLayers < pBbArgs->iLayers;
          iLayers++, pdwDestXYBottomRight++, pdwDestXYTopLeft++)
     {
+        if (pRenderingData->pLayers[iLayers]->bXORComp)
+        {
+            // for cursor layer, every bit indicate 1 pixel. should extend the width as real output pixel.
+            pBbArgs->rcDst[iLayers].right =
+                pBbArgs->rcDst[iLayers].left + (pBbArgs->rcDst[iLayers].right - pBbArgs->rcDst[iLayers].left)*8;
+        }
+
         *pdwDestXYTopLeft     = (pBbArgs->rcDst[iLayers].top    << 16 ) |
                                  pBbArgs->rcDst[iLayers].left;
         *pdwDestXYBottomRight = ((pBbArgs->rcDst[iLayers].bottom - 1) << 16 ) |
@@ -5497,8 +5545,10 @@ bool CompositeState::RenderBufferMediaWalker(
     {
         if (pRenderingData->bCmFcEnable && pRenderingData->iLayers > 0)
         {
-            pWalkerStatic->DW69.DestHorizontalBlockOrigin               = 0;
-            pWalkerStatic->DW69.DestVerticalBlockOrigin                 = 0;
+            pWalkerStatic->DW69.DestHorizontalBlockOrigin               =
+                (uint16_t)pRenderingData->pTarget[0]->rcDst.left;
+            pWalkerStatic->DW69.DestVerticalBlockOrigin                 =
+                (uint16_t)pRenderingData->pTarget[0]->rcDst.top;
         }
         else
         {
@@ -5514,8 +5564,10 @@ bool CompositeState::RenderBufferMediaWalker(
         // Horizontal and Vertical base on non-rotated in case of dual output
         if (pRenderingData->bCmFcEnable && pRenderingData->iLayers > 0)
         {
-            pWalkerStatic->DW69.DestHorizontalBlockOrigin               = 0;
-            pWalkerStatic->DW69.DestVerticalBlockOrigin                 = 0;
+            pWalkerStatic->DW69.DestHorizontalBlockOrigin               =
+                (uint16_t)pRenderingData->pTarget[1]->rcDst.left;
+            pWalkerStatic->DW69.DestVerticalBlockOrigin                 =
+                (uint16_t)pRenderingData->pTarget[1]->rcDst.top;
         }
         else
         {
@@ -6574,6 +6626,10 @@ bool CompositeState::BuildFilter(
                     pFilter->process = Process_CPBlend;
                     break;
 
+                case BLEND_XOR_MONO:
+                    pFilter->process = Process_XORComposite;
+                    break;
+
                 case BLEND_NONE:
                 default:
                     pFilter->process = Process_Composite;
@@ -6835,6 +6891,7 @@ bool CompositeState::IsUsingSampleUnorm(
                     ((pSrc->rcDst.right  - pSrc->rcDst.left) > 0 ?
                     (pSrc->rcDst.right  - pSrc->rcDst.left) : 1);
     }
+
     if (IsBobDiEnabled(pSrc) &&
         pSrc->ScalingMode != VPHAL_SCALING_AVS)
     {
@@ -6954,7 +7011,8 @@ MOS_STATUS CompositeState::Initialize(
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
         __VPHAL_COMP_8TAP_ADAPTIVE_ENABLE_ID,
-        &UserFeatureData));
+        &UserFeatureData,
+        m_pOsInterface->pOsContext));
     m_b8TapAdaptiveEnable = UserFeatureData.bData ? true : false;
 #endif
 
@@ -6982,7 +7040,8 @@ MOS_STATUS CompositeState::Initialize(
             VPHAL_COMP_CMFC_COEFF_HEIGHT,
             false,
             MOS_MMC_DISABLED,
-            &bAllocated));
+            &bAllocated,
+            MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_RENDER));
     }
 
     // Setup Procamp Parameters
@@ -7151,7 +7210,8 @@ CompositeState::CompositeState(
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_CSC_COEFF_PATCH_MODE_DISABLE_ID,
-        &UserFeatureData));
+        &UserFeatureData,
+        m_pOsInterface->pOsContext));
     m_bFtrCSCCoeffPatchMode = UserFeatureData.bData ? false : true;
 
 finish:

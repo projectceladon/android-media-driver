@@ -941,8 +941,8 @@ void RenderHal_AdjustBoundary(
 
         case RENDERHAL_SS_BOUNDARY_ORIGINAL:
         default:
-            *pdwSurfaceHeight = MOS_ALIGN_CEIL(pSurface->dwHeight, wHeightAlignUnit);
-            *pdwSurfaceWidth  = MOS_ALIGN_CEIL(pSurface->dwWidth,  wWidthAlignUnit);
+            *pdwSurfaceHeight = (pRenderHalSurface->dwHeightInUse == 0) ? MOS_ALIGN_CEIL(pSurface->dwHeight, wHeightAlignUnit) : pRenderHalSurface->dwHeightInUse;
+            *pdwSurfaceWidth  = (pRenderHalSurface->dwWidthInUse == 0) ? MOS_ALIGN_CEIL(pSurface->dwWidth, wWidthAlignUnit) : pRenderHalSurface->dwWidthInUse;
             break;
     }
 }
@@ -1603,6 +1603,7 @@ MOS_STATUS RenderHal_AllocateBB(
     AllocParams.Format   = Format_Buffer;
     AllocParams.dwBytes  = iSize;
     AllocParams.pBufName = "RenderHalBB";
+    AllocParams.ResUsageType = MOS_HW_RESOURCE_USAGE_MEDIA_BATCH_BUFFERS;
 
     MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnAllocateResource(
         pOsInterface,
@@ -3365,7 +3366,11 @@ MOS_STATUS RenderHal_GetSurfaceStateEntries(
 
             case Format_P010:
             case Format_P016:
-                if (pRenderHal->bEnableP010SinglePass &&
+                if (pParams->bUseSinglePlane == true)
+                {
+                    PlaneDefinition = RENDERHAL_PLANES_R16_UNORM;
+                }
+                else if (pRenderHal->bEnableP010SinglePass &&
                     (pRenderHalSurface->SurfType != RENDERHAL_SURF_OUT_RENDERTARGET))
                 {
                     PlaneDefinition = RENDERHAL_PLANES_P010_1PLANE;
@@ -3423,13 +3428,17 @@ MOS_STATUS RenderHal_GetSurfaceStateEntries(
                 // to enable 2 plane NV12 when the width or Height is not a multiple of 4.
                 // For G10+, enable 2 plane NV12 when width is not multiple of 2 or height
                 // is not multiple of 4.
-                if ( pRenderHalSurface->SurfType == RENDERHAL_SURF_OUT_RENDERTARGET   ||
-                     (pParams->bWidthInDword_Y && pParams->bWidthInDword_UV)          ||
-                     pParams->b2PlaneNV12NeededByKernel                               ||
-                     bIsChromaSitEnabled ||
-                     pRenderHal->pfnIs2PlaneNV12Needed(pRenderHal,
-                                                       pRenderHalSurface,
-                                                       pParams->Boundary))
+                if (pParams->bUseSinglePlane == true)
+                {
+                    PlaneDefinition = RENDERHAL_PLANES_R8;
+                }
+                else if (pRenderHalSurface->SurfType == RENDERHAL_SURF_OUT_RENDERTARGET ||
+                    (pParams->bWidthInDword_Y && pParams->bWidthInDword_UV) ||
+                    pParams->b2PlaneNV12NeededByKernel ||
+                    bIsChromaSitEnabled ||
+                    pRenderHal->pfnIs2PlaneNV12Needed(pRenderHal,
+                        pRenderHalSurface,
+                        pParams->Boundary))
                 {
                     PlaneDefinition = RENDERHAL_PLANES_NV12_2PLANES;
                 }
@@ -4917,7 +4926,7 @@ MOS_STATUS RenderHal_InitCommandBuffer(
             pCmdBuffer->Attributes.bEnableMediaFrameTracking = pGenericPrologParams->bEnableMediaFrameTracking;
             pCmdBuffer->Attributes.dwMediaFrameTrackingTag = pGenericPrologParams->dwMediaFrameTrackingTag;
             pCmdBuffer->Attributes.dwMediaFrameTrackingAddrOffset = pGenericPrologParams->dwMediaFrameTrackingAddrOffset;
-            pCmdBuffer->Attributes.resMediaFrameTrackingSurface = *(pGenericPrologParams->presMediaFrameTrackingSurface);
+            pCmdBuffer->Attributes.resMediaFrameTrackingSurface   = pGenericPrologParams->presMediaFrameTrackingSurface;
         }
         else
         {
@@ -5138,7 +5147,7 @@ MOS_STATUS RenderHal_SendRcsStatusTag(
     PMOS_INTERFACE               pOsInterface;
     PMHW_MI_INTERFACE            pMhwMiInterface;
     MHW_PIPE_CONTROL_PARAMS      PipeCtl;
-    MOS_RESOURCE                 OsResource;
+    PMOS_RESOURCE                osResource = nullptr;
 
     //------------------------------------
     MHW_RENDERHAL_CHK_NULL(pRenderHal);
@@ -5151,14 +5160,15 @@ MOS_STATUS RenderHal_SendRcsStatusTag(
     pMhwMiInterface = pRenderHal->pMhwMiInterface;
 
     // Get the Os Resource
-    MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, &OsResource));
+    MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, osResource));
+    MHW_RENDERHAL_CHK_NULL(osResource);
 
     // Register the buffer
-    MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnRegisterResource(pOsInterface, &OsResource, true, true));
+    MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnRegisterResource(pOsInterface, osResource, true, true));
 
     // Issue pipe control to write GPU Status Tag
     PipeCtl                   = g_cRenderHal_InitPipeControlParams;
-    PipeCtl.presDest          = &OsResource;
+    PipeCtl.presDest          = osResource;
     PipeCtl.dwResourceOffset  = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, pOsInterface->CurrentGpuContextOrdinal); //MOS_GPU_CONTEXT_RENDER or MOS_GPU_CONTEXT_RENDER3
     PipeCtl.dwDataDW1         = pOsInterface->pfnGetGpuStatusTag(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
     PipeCtl.dwPostSyncOp      = MHW_FLUSH_WRITE_IMMEDIATE_DATA;
@@ -5876,6 +5886,11 @@ MOS_STATUS RenderHal_SetupSurfaceStatesOs(
             additional_plane_offset *= pSurface->dwPitch;
             TokenParams.dwSurfaceOffset
                     = pSurface->dwOffset + additional_plane_offset;
+            //force it to 0 for 1D buffer
+            if (pParams->bBufferUse)
+            {
+                TokenParams.dwSurfaceOffset = 0;
+            }
             break;
     }
 
@@ -6176,6 +6191,8 @@ bool RenderHal_Is2PlaneNV12Needed(
     uint16_t wHeightAlignUnit;
     uint32_t dwSurfaceHeight;
     uint32_t dwSurfaceWidth;
+    uint32_t widthAlignUnit;
+    uint32_t heightAlignUnit;
     bool bRet = false;
 
     //---------------------------------------------
@@ -6209,30 +6226,10 @@ bool RenderHal_Is2PlaneNV12Needed(
             break;
     }
 
-    // On G8, NV12 format needs the width and Height to be a multiple
-    // of 4 for both 3D sampler and 8x8 sampler; G75 needs the width
-    // of NV12 input surface to be a multiple of 4 for 3D sampler.
-    // On G9+, width need to be a multiple of 2, while height still need
-    // be a multiple of 4. Since G9 already post PV, just keep the old logic
-    // to enable 2 plane NV12 when the width or Height is not a multiple of 4.
-    // For G10+, enable 2 plane NV12 when width is not multiple of 2 or height
-    // is not multiple of 4.
-    if (!GFX_IS_GEN_10_OR_LATER(pRenderHal->Platform))
-    {
-        bRet = (!MOS_IS_ALIGNED(dwSurfaceHeight, 4) || !MOS_IS_ALIGNED(dwSurfaceWidth, 4));
-    }
-    else
-    {
-        // For AVS sampler, no limitation for 4 alignment.
-        if (RENDERHAL_SCALING_AVS == pRenderHalSurface->ScalingMode)
-        {
-            bRet = (!MOS_IS_ALIGNED(dwSurfaceHeight, 2) || !MOS_IS_ALIGNED(dwSurfaceWidth, 2));
-        }
-        else
-        {
-            bRet = (!MOS_IS_ALIGNED(dwSurfaceHeight, 4) || !MOS_IS_ALIGNED(dwSurfaceWidth, 2));
-        }
-    }
+    // NV12 format needs the width and height to be a multiple for both 3D sampler and 8x8 sampler.
+    // For AVS sampler, no limitation for 4 alignment.
+    pRenderHal->pMhwRenderInterface->GetSamplerResolutionAlignUnit(RENDERHAL_SCALING_AVS == pRenderHalSurface->ScalingMode, widthAlignUnit, heightAlignUnit);
+    bRet = (!MOS_IS_ALIGNED(dwSurfaceHeight, heightAlignUnit) || !MOS_IS_ALIGNED(dwSurfaceWidth, widthAlignUnit));
 
     // Note: Always using 2 plane NV12 as WA for the corruption of NV12 input
     // of which the height is greater than 16352
@@ -6902,7 +6899,8 @@ MOS_STATUS RenderHal_InitInterface(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_VDI_MODE_ID,
-        &userFeatureValueData);
+        &userFeatureValueData,
+        pOsInterface->pOsContext);
 #endif
     pRenderHal->bVDIWalker = userFeatureValueData.u32Data ? true : false;
 
@@ -6914,7 +6912,8 @@ MOS_STATUS RenderHal_InitInterface(
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_MEDIA_WALKER_MODE_ID,
-        &userFeatureValueData);
+        &userFeatureValueData,
+        pOsInterface->pOsContext);
 #endif
     pRenderHal->MediaWalkerMode = (MHW_WALKER_MODE)userFeatureValueData.u32Data;
 

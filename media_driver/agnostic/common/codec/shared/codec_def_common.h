@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017, Intel Corporation
+* Copyright (c) 2017-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -147,6 +147,10 @@ enum CODECHAL_STANDARD
     CODECHAL_HCP_BASE   = 64,
     CODECHAL_HEVC       = CODECHAL_HCP_BASE,
     CODECHAL_VP9        = CODECHAL_HCP_BASE + 1,
+
+    //AVP pipeline
+    CODECHAL_AVP_BASE   = CODECHAL_HCP_BASE + 2,
+    CODECHAL_AV1        = CODECHAL_AVP_BASE,
     CODECHAL_STANDARD_MAX
 };
 
@@ -163,7 +167,7 @@ enum CODECHAL_MODE
     CODECHAL_DECODE_MODE_VC1VLD             = 3,
     CODECHAL_DECODE_MODE_AVCVLD             = 4,
     CODECHAL_DECODE_MODE_JPEG               = 5,
-    CODECHAL_DECODE_RESERVED_0              = 6,    // formerly SVC
+    CODECHAL_DECODE_MODE_AV1VLD             = 6,
     CODECHAL_DECODE_MODE_VP8VLD             = 7,
     CODECHAL_DECODE_MODE_HEVCVLD            = 8,
     CODECHAL_DECODE_MODE_HUC                = 9,

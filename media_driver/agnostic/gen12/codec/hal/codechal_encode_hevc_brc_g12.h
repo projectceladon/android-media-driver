@@ -86,7 +86,7 @@ public:
     //!
     //! \brief    Destructor
     //!
-    virtual ~CodecHalHevcBrcG12() {};
+    virtual ~CodecHalHevcBrcG12() { FreeBrcResources(); };
 
 public:
     //!
@@ -106,8 +106,8 @@ public:
     virtual MOS_STATUS FreeBrcResources();
 
 
-    MOS_STATUS SetupThreadSpace(CmKernel *cmKernel, CmThreadSpace *threadSpace);
-    MOS_STATUS SetupBrcLcuqpThreadSpace(CmKernel *cmKernel, CmThreadSpace *threadSpace);
+    MOS_STATUS SetupThreadSpace(CmKernel *cmKernel, CmThreadSpace *& threadSpace);
+    MOS_STATUS SetupBrcLcuqpThreadSpace(CmKernel *cmKernel, CmThreadSpace *& threadSpace);
 
     virtual MOS_STATUS InitBrcKernelState();
     virtual MOS_STATUS EncodeBrcInitResetKernel();
@@ -117,8 +117,8 @@ public:
 
     MOS_STATUS InitCurbeDataBrcInit();
     MOS_STATUS SetupSurfacesBrcInit();
-    MOS_STATUS BrcInitResetCurbe(CODECHAL_HEVC_BRC_KRNIDX  brcKrnIdx);
-    MOS_STATUS BrcUpdateCurbe(CODECHAL_HEVC_BRC_KRNIDX  brcKrnIdx);
+    MOS_STATUS BrcInitResetCurbe();
+    MOS_STATUS BrcUpdateCurbe();
     MOS_STATUS SetupSurfacesBrcUpdate();
     MOS_STATUS SetupSurfacesBrcLcuQp();
     //!
@@ -126,7 +126,7 @@ public:
     //!
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
-    //!    
+    //!
     MOS_STATUS SetupKernelArgsBrcInit();
     MOS_STATUS SetupKernelArgsBrcUpdate();
     MOS_STATUS SetupKernelArgsBrcLcuQp();

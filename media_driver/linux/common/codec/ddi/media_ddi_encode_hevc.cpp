@@ -340,7 +340,10 @@ VAStatus DdiEncodeHevc::EncodeInCodecHal(uint32_t numSlices)
     }
 
     PCODEC_HEVC_ENCODE_SEQUENCE_PARAMS hevcSeqParams = (PCODEC_HEVC_ENCODE_SEQUENCE_PARAMS)((uint8_t *)m_encodeCtx->pSeqParams);
-    hevcSeqParams->TargetUsage = m_encodeCtx->targetUsage;
+    if (m_encodeCtx->bNewSeq)
+    {
+        hevcSeqParams->TargetUsage = m_encodeCtx->targetUsage;
+    }
     encodeParams.pSeqParams   = m_encodeCtx->pSeqParams;
     encodeParams.pVuiParams   = m_encodeCtx->pVuiParams;
     encodeParams.pPicParams   = m_encodeCtx->pPicParams;
@@ -524,6 +527,7 @@ VAStatus DdiEncodeHevc::ParsePicParams(
         || m_encodeCtx->vaProfile == VAProfileHEVCMain422_10
         || m_encodeCtx->vaProfile == VAProfileHEVCMain422_12
         || m_encodeCtx->vaProfile == VAProfileHEVCMain10
+        || m_encodeCtx->vaProfile == VAProfileHEVCMain12
         || m_encodeCtx->vaProfile == VAProfileHEVCSccMain10
         || m_encodeCtx->vaProfile == VAProfileHEVCSccMain444
         || m_encodeCtx->vaProfile == VAProfileHEVCSccMain444_10)
@@ -579,6 +583,9 @@ VAStatus DdiEncodeHevc::ParsePicParams(
 
     /* picParams->coding_type; App is always setting this to 0 */
     hevcPicParams->CodingType = picParams->pic_fields.bits.coding_type;
+
+    /* CodingType may be updated in slice processing. Do below to save pyramid level info */
+    hevcPicParams->ppsCodingType = picParams->pic_fields.bits.coding_type;
 
     hevcPicParams->HierarchLevelPlus1 = picParams->hierarchical_level_plus1;
 
@@ -1278,8 +1285,8 @@ VAStatus DdiEncodeHevc::ParseMiscParams(void *ptr)
         VAEncMiscParameterBufferDirtyRect *vaEncMiscDirtyRect = (VAEncMiscParameterBufferDirtyRect *)miscParamBuf->data;
 
         uint8_t blockSize  = (m_encodeCtx->bVdencActive) ? vdencRoiBlockSize : CODECHAL_MACROBLOCK_WIDTH;
-        uint32_t frameWidth = (seqParams->wFrameWidthInMinCbMinus1 + 1) << (seqParams->log2_min_coding_block_size_minus3 + 3);
-        uint32_t frameHeight = (seqParams->wFrameHeightInMinCbMinus1 + 1) << (seqParams->log2_min_coding_block_size_minus3 + 3);
+        uint32_t rightBorder = CODECHAL_GET_WIDTH_IN_BLOCKS(m_encodeCtx->dwFrameWidth, blockSize) - 1;
+        uint32_t bottomBorder = CODECHAL_GET_HEIGHT_IN_BLOCKS(m_encodeCtx->dwFrameHeight, blockSize) - 1;
 
          DDI_CHK_NULL(vaEncMiscDirtyRect->roi_rectangle, "nullptr dirty rect", VA_STATUS_ERROR_INVALID_PARAMETER);
         if(vaEncMiscDirtyRect->num_roi_rectangle > ENCODE_VDENC_HEVC_MAX_DIRTYRECT_G10)
@@ -1311,21 +1318,10 @@ VAStatus DdiEncodeHevc::ParseMiscParams(void *ptr)
             {
                 auto &rect    = picParams->pDirtyRect[i];
                 auto &va_rect = vaEncMiscDirtyRect->roi_rectangle[i];
-
-                // Check and adjust if rect not within frame boundaries
-                rect.Left   = MOS_MIN(va_rect.x, frameWidth - 1);
-                rect.Top    = MOS_MIN(va_rect.y, frameHeight - 1);
-                rect.Right  = MOS_MIN(va_rect.x + va_rect.width, frameWidth - 1);
-                rect.Bottom = MOS_MIN(va_rect.y + va_rect.height, frameHeight - 1);
-
-                if( rect.Left > rect.Right ||  rect.Top > rect.Bottom)
-                {
-                    DDI_ASSERTMESSAGE("Invalid rect region parameter.");
-                    return VA_STATUS_ERROR_INVALID_PARAMETER;
-                }
-
-                rect.Right  = MOS_ALIGN_CEIL(rect.Right, blockSize);
-                rect.Bottom = MOS_ALIGN_CEIL(rect.Bottom, blockSize);
+                rect.Left   = va_rect.x;
+                rect.Top    = va_rect.y;
+                rect.Right  = va_rect.x + va_rect.width - 1;
+                rect.Bottom = va_rect.y + va_rect.height - 1;
 
                 // Convert from pixel units to block units
                 rect.Left /= blockSize;
@@ -1333,6 +1329,16 @@ VAStatus DdiEncodeHevc::ParseMiscParams(void *ptr)
                 rect.Top /= blockSize;
                 rect.Bottom /= blockSize;
 
+                // Check and adjust if rect not within frame boundaries
+                rect.Left = MOS_MIN(rect.Left, rightBorder);
+                rect.Right = MOS_MIN(rect.Right, rightBorder);
+                rect.Top = MOS_MIN(rect.Top, bottomBorder);
+                rect.Bottom = MOS_MIN(rect.Bottom, bottomBorder);
+                if (rect.Left > rect.Right || rect.Top > rect.Bottom)
+                {
+                    DDI_ASSERTMESSAGE("Invalid rect region parameter.");
+                    return VA_STATUS_ERROR_INVALID_PARAMETER;
+                }
                 picParams->NumDirtyRects ++;
             }
         }

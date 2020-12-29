@@ -219,6 +219,20 @@ public:
         PMOS_RESOURCE         osResource,
         bool                  bWriteOperation);
 
+    //!
+    //! \brief    Update the usage type of resource for cache policy
+    //! \details  Update the usage type of resource for cache policy
+    //! \param    PMOS_RESOURCE OsResource
+    //!           [in] OS resource sturcture
+    //! \param    MOS_HW_RESOURCE_DEF resUsageType
+    //!           [in] MOS_HW_RESOURCE_DEF to be set
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    MOS_STATUS UpdateResourceUsageType(
+        PMOS_RESOURCE           osResource,
+        MOS_HW_RESOURCE_DEF     resUsageType);
+
 protected:
 
     //!

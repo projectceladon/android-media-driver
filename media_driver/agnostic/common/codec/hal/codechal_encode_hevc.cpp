@@ -468,13 +468,14 @@ MOS_STATUS CodechalEncHevcState::ExecutePictureLevel()
         // of the BB and keep the current frame's tag at the end of the BB. There will be a delay for tag update but it should be fine
         // as long as Dec/VP/Enc won't depend on this PAK so soon.
 
-        MOS_RESOURCE globalGpuContextSyncTagBuffer;
+        PMOS_RESOURCE globalGpuContextSyncTagBuffer = nullptr;
         CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
             m_osInterface,
-            &globalGpuContextSyncTagBuffer));
+            globalGpuContextSyncTagBuffer));
+        CODECHAL_ENCODE_CHK_NULL_RETURN(globalGpuContextSyncTagBuffer);
 
         MHW_MI_STORE_DATA_PARAMS params;
-        params.pOsResource = &globalGpuContextSyncTagBuffer;
+        params.pOsResource = globalGpuContextSyncTagBuffer;
         params.dwResourceOffset = m_osInterface->pfnGetGpuStatusTagOffset(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         uint32_t value = m_osInterface->pfnGetGpuStatusTag(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         params.dwValue = (value > 0) ? (value - 1) : 0;
@@ -960,7 +961,7 @@ MOS_STATUS CodechalEncHevcState::UserFeatureKeyReport()
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalEncodeHevcBase::UserFeatureKeyReport());
 
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_REGION_NUMBER_ID, m_numRegionsInSlice);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_REGION_NUMBER_ID, m_numRegionsInSlice, m_osInterface->pOsContext);
 
     return eStatus;
 }
@@ -1065,7 +1066,11 @@ CodechalEncHevcState::CodechalEncHevcState(
 
 CodechalEncHevcState::~CodechalEncHevcState()
 {
-    MOS_Delete(m_hmeKernel);
+    if (m_hmeKernel)
+    {
+        MOS_Delete(m_hmeKernel);
+        m_hmeKernel = nullptr;
+    }
 }
 
 MOS_STATUS CodechalEncHevcState::AllocateBrcResources()

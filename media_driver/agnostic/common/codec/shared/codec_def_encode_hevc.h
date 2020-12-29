@@ -57,7 +57,7 @@
 #define ENCODE_DP_HEVC_NUM_MAX_VME_L1_REF_G9  1
 #define ENCODE_DP_HEVC_MAX_NUM_ROI            16
 #define ENCODE_DP_HEVC_ROI_BLOCK_SIZE         1     //From DDI, 0:8x8, 1:16x16, 2:32x32, 3:64x64
-#define ENCODE_DP_HEVC_ROI_BLOCK_Width        16    
+#define ENCODE_DP_HEVC_ROI_BLOCK_Width        16
 #define ENCODE_DP_HEVC_ROI_BLOCK_HEIGHT       16
 
 typedef enum
@@ -308,7 +308,7 @@ typedef struct _CODEC_HEVC_ENCODE_SEQUENCE_PARAMS
             *        \n - 1 : tile based encoding enabled.
             */
             uint32_t        EnableTileBasedEncode    : 1;
-            /*! \brief Indicates if BRC can use larger P/B frame size than UserMaxPBFrameSize 
+            /*! \brief Indicates if BRC can use larger P/B frame size than UserMaxPBFrameSize
             *
             *        \n - 0 : BRC can not use larger P/B frame size  than UserMaxPBFrameSize.
             *        \n - 1 : BRC can use larger P/B frame size  than UserMaxPBFrameSize.
@@ -348,7 +348,22 @@ typedef struct _CODEC_HEVC_ENCODE_SEQUENCE_PARAMS
             */
             uint32_t        HierarchicalFlag         : 1;
 
-            uint32_t        ReservedBits             : 3;
+            /*! \brief Indicates if TCBRC is enabled.
+            *
+            *        \n - 0 : no TCBRC.
+            *        \n - 1 : enable TCBRC if TCBRCSupport in CAP is 1.
+            */
+            uint32_t        TCBRCEnable              : 1;
+
+            /*! \brief Indicates if current encodin gis lookahead pass.
+            *
+            *        \n - 0 : the current encoding is in the actual encoding pass, and one of the BRC modes (CBR, VBR, etc.) should be selected.
+            *        \n - 1 : the current encoding is in the lookahead pass.
+            *    \n Valid only when LookAheadAnalysisSupport in CAP is on and LookAheadDepth > 0.
+            */
+            uint32_t        bLookAheadPhase          : 1;
+
+            uint32_t        ReservedBits             : 1;
         };
         uint32_t    SeqFlags;
     };
@@ -560,6 +575,13 @@ typedef struct _CODEC_HEVC_ENCODE_PICTURE_PARAMS
     *    \n For B1 and B2 explanation refer to NumOfBInGop[]
     */
     uint8_t                 CodingType;
+
+    /*! \brief Specifies picture coding type.
+    *
+    *   Store pic coding type specified through DDI to retain pyramid level information. CodingType is updated to I/P/B when parsing slice-level parameters
+    */
+    uint8_t                 ppsCodingType;
+
     uint8_t                 HierarchLevelPlus1;
     uint16_t                NumSlices;
 
@@ -642,7 +664,7 @@ typedef struct _CODEC_HEVC_ENCODE_PICTURE_PARAMS
             uint32_t            pps_deblocking_filter_disabled_flag     : 1;
             uint32_t            bEnableCTULevelReport                   : 1;  // [0..1]
             uint32_t            bEnablePartialFrameUpdate               : 1;
-            uint32_t            reservedbits                            : 3;        
+            uint32_t            reservedbits                            : 3;
         };
         uint32_t                PicFlags;
     };
@@ -741,7 +763,7 @@ typedef struct _CODEC_HEVC_ENCODE_PICTURE_PARAMS
     *    Applies only to BRC case.
     */
     char                    MinDeltaQp;
-    
+
     union
     {
         struct
@@ -752,7 +774,7 @@ typedef struct _CODEC_HEVC_ENCODE_PICTURE_PARAMS
             uint32_t        RoundingOffsetInter : 7;
             uint32_t        reservedbits : 16;
         } fields;
-        
+
         uint32_t            value;
     } CustomRoundingOffsetsParams;
 
@@ -841,6 +863,24 @@ typedef struct _CODEC_HEVC_ENCODE_PICTURE_PARAMS
     char                    pps_act_y_qp_offset_plus5;
     char                    pps_act_cb_qp_offset_plus5;
     char                    pps_act_cr_qp_offset_plus3;
+
+    /*! \brief Source down scaling ratio for look ahead pass.
+    *
+    *    when bLookAheadPhase == 1, this parameter indicates the source down scaling ratio for look ahead pass. Otherwise, the parameter should be ignored.
+    *    (X16Minus1_X + 1) is the numerator of the horizontal downscaling ratio over 16.
+    *    (X16Minus1_Y + 1) is the numerator of the vertical downscaling ratio over 16.
+    */
+    union
+    {
+        struct
+        {
+            uint8_t X16Minus1_X : 4;
+            uint8_t X16Minus1_Y : 4;
+        } fields;
+        uint8_t value;
+    } DownScaleRatio;
+
+    uint8_t QpModulationStrength;
 } CODEC_HEVC_ENCODE_PICTURE_PARAMS, *PCODEC_HEVC_ENCODE_PICTURE_PARAMS;
 
 /*! \brief Slice-level parameters of a compressed picture for HEVC encoding.

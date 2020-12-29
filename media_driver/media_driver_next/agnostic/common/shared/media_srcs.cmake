@@ -1,4 +1,4 @@
-# Copyright (c) 2018, Intel Corporation
+# Copyright (c) 2018-2020, Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -29,10 +29,13 @@ media_include_subdirectory(mediacontext)
 media_include_subdirectory(statusreport)
 media_include_subdirectory(mmc)
 media_include_subdirectory(bufferMgr)
+media_include_subdirectory(mediacopy)
+media_include_subdirectory(media_sfc_interface)
 
 set(TMP_HEADERS_
    ${TMP_HEADERS_}
     ${CMAKE_CURRENT_LIST_DIR}/media_utils.h
+    ${CMAKE_CURRENT_LIST_DIR}/media_common_defs.h
 )
 
 set(SOURCES_NEW

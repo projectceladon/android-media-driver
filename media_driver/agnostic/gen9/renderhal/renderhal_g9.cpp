@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2012-2019, Intel Corporation
+* Copyright (c) 2012-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -28,6 +28,7 @@
 #include "mos_os.h"
 #include "renderhal.h"
 #include "renderhal_g9.h"
+#include "mhw_state_heap_g9.h"
 
 #define RENDERHAL_NS_PER_TICK_RENDER_G9        (83.333)                                  // For SKL, 83.333 nano seconds per tick in render engine
 #define RENDERHAL_NS_PER_TICK_RENDER_G9LP        (52.083)                               //For BXT, 52.083 nano seconds per tick in render engine
@@ -135,7 +136,7 @@ MOS_STATUS XRenderHal_Interface_g9::SetupSurfaceState (
     MHW_RENDERHAL_CHK_NULL(pRenderHal->pStateHeap);
     MHW_RENDERHAL_CHK_NULL(pRenderHal->pHwSizes);
     MHW_RENDERHAL_CHK_NULL(pRenderHal->pMhwStateHeap);
-    MHW_RENDERHAL_ASSERT(pRenderHalSurface->Rotation >= 0 &&
+    MHW_RENDERHAL_ASSERT(pRenderHalSurface->Rotation >= MHW_ROTATION_IDENTITY &&
                          pRenderHalSurface->Rotation <= MHW_ROTATE_90_MIRROR_HORIZONTAL);
     //-----------------------------------------
 
@@ -591,11 +592,11 @@ MOS_STATUS XRenderHal_Interface_g9::GetSamplerOffsetAndPtr_DSH(
             }
             else if ( pSamplerParams->Convolve.ui8ConvolveType == 1 )
             {   // 1D convolve
-                dwOffset += iSamplerID * MHW_SAMPLER_STATE_CONV_1D_INC_G9;      // 16: size of one element, 8 elements for SKL
+                dwOffset += iSamplerID * MHW_SAMPLER_STATE_CONV_1D_INC;      // 16: size of one element, 8 elements for SKL
             }
             else
             {   // 1P convolve (same as gen8) and 2D convolve BDW mode
-                dwOffset += iSamplerID * MHW_SAMPLER_STATE_CONV_INC_G8;         // 16: size of one element, 32: 32 entry
+                dwOffset += iSamplerID * MHW_SAMPLER_STATE_CONV_INC_LEGACY;  // 16: size of one element, 32: 32 entry
             }
             break;
 

@@ -223,6 +223,7 @@ struct CodechalVdencAvcStateG11::BrcUpdateDmem
     uint8_t      UPD_CQMEnabled_U8;  // 0 indicates CQM is disabled for current frame; otherwise CQM is enabled.
     uint32_t     UPD_LA_TargetSize_U32;     // target frame size in lookahead BRC (if EnableLookAhead == 1) or TCBRC mode. If zero, lookahead BRC or TCBRC is disabled.
     uint32_t     UPD_LA_TargetFulness_U32;  // target VBV buffer fulness in lookahead BRC mode (if EnableLookAhead == 1).
+    uint8_t      UPD_Delta_U8;              // delta QP of pyramid
     uint8_t      RSVD2[16];
 };
 
@@ -701,6 +702,10 @@ CodechalVdencAvcStateG11::CodechalVdencAvcStateG11(
 
     m_vdboxOneDefaultUsed = true;
 
+    m_hmeSupported   = true;
+    m_16xMeSupported = true;
+    m_32xMeSupported = true;
+
     Mos_CheckVirtualEngineSupported(m_osInterface, false, true);
 
     CODECHAL_DEBUG_TOOL(
@@ -806,7 +811,7 @@ MOS_STATUS CodechalVdencAvcStateG11::UserFeatureKeyReport()
 #if (_DEBUG || _RELEASE_INTERNAL)
 
     // VE2.0 Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENABLE_ENCODE_VE_CTXSCHEDULING_ID, MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(m_osInterface));
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENABLE_ENCODE_VE_CTXSCHEDULING_ID, MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(m_osInterface), m_osInterface->pOsContext);
 
 #endif // _DEBUG || _RELEASE_INTERNAL
     return eStatus;
@@ -1339,6 +1344,19 @@ MOS_STATUS CodechalVdencAvcStateG11::GetTrellisQuantization(PCODECHAL_ENCODE_AVC
     return eStatus;
 }
 
+MOS_STATUS CodechalVdencAvcStateG11::AddHucOutputRegistersHandling(
+    MmioRegistersHuc*   mmioRegisters,
+    PMOS_COMMAND_BUFFER cmdBuffer,
+    bool                addToEncodeStatus)
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    CODECHAL_ENCODE_CHK_NULL_RETURN(mmioRegisters);
+    CODECHAL_ENCODE_CHK_NULL_RETURN(cmdBuffer);
+
+    return StoreHucErrorStatus(mmioRegisters, cmdBuffer, addToEncodeStatus);
+}
+
 MOS_STATUS CodechalVdencAvcStateG11::SetDmemHuCBrcInitReset()
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
@@ -1454,11 +1472,13 @@ MOS_STATUS CodechalVdencAvcStateG11::SetDmemHuCBrcUpdate()
     dmem->MOTION_ADAPTIVE_G4 = (m_avcSeqParam->ScenarioInfo == ESCENARIO_GAMESTREAMING);
     dmem->UPD_CQMEnabled_U8  = m_avcSeqParam->seq_scaling_matrix_present_flag || m_avcPicParam->pic_scaling_matrix_present_flag;
 
+    dmem->UPD_LA_TargetSize_U32 = m_avcPicParam->TargetFrameSize << 3;
+
     if (m_lookaheadDepth > 0)
     {
         dmem->EnableLookAhead = 1;
-        dmem->UPD_LA_TargetSize_U32 = m_avcPicParam->TargetFrameSize << 3;
         dmem->UPD_LA_TargetFulness_U32 = m_targetBufferFulness;
+        dmem->UPD_Delta_U8 = m_avcPicParam->QpModulationStrength;
     }
 
     CODECHAL_DEBUG_TOOL(

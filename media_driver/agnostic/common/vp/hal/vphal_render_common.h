@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2010-2017, Intel Corporation
+* Copyright (c) 2010-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -483,6 +483,14 @@ struct MEDIA_WALKER_KA2_STATIC_DATA
             uint32_t       ConstantBlendingAlphaLayer6 : 8;
             uint32_t       ConstantBlendingAlphaLayer7 : 8;
             uint32_t       PointerToInlineParameters   : 8;
+        };
+
+        struct
+        {
+            uint32_t       ConstantBlendingAlphaLayer51 : 8;
+            uint32_t       ConstantBlendingAlphaLayer61 : 8;
+            uint32_t       ConstantBlendingAlphaLayer71 : 8;
+            uint32_t       OutputDepth                  : 8;
         };
 
         // DNDI
@@ -1476,6 +1484,14 @@ struct MEDIA_OBJECT_KA2_STATIC_DATA
             uint32_t       PointerToInlineParameters   : 8;
         };
 
+        struct
+        {
+            uint32_t       ConstantBlendingAlphaLayer51 : 8;
+            uint32_t       ConstantBlendingAlphaLayer61 : 8;
+            uint32_t       ConstantBlendingAlphaLayer71 : 8;
+            uint32_t       OutputDepth                  : 8;
+        };
+
         // DNDI
         struct
         {
@@ -1562,7 +1578,8 @@ struct MEDIA_OBJECT_KA2_STATIC_DATA
             uint32_t       RotationAngleofLayer6       : 3;
             uint32_t       RotationAngleofLayer7       : 3;
             uint32_t       ChromaSitingLocation        : 3;
-            uint32_t                                   : 5;
+            uint32_t       MonoXORCompositeMask        : 3;
+            uint32_t                                   : 2;
         } ObjKa2Gen9;
 
         uint32_t       Value;

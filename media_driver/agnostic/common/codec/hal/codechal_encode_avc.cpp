@@ -1427,6 +1427,9 @@ CodechalEncodeAvcEnc::CodechalEncodeAvcEnc(
     {
         m_useCmScalingKernel = 1;
     }
+    CODECHAL_DEBUG_TOOL(
+        m_mmcUserFeatureUpdated = false;
+    )
 }
 
 CodechalEncodeAvcEnc::~CodechalEncodeAvcEnc()
@@ -1541,7 +1544,8 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_BRC_SOFTWARE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
 
     if (userFeatureData.i32Data)
     {
@@ -1549,7 +1553,7 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
     }*/
 
     // SW BRC DLL Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_BRC_SOFTWARE_IN_USE_ID, (m_swBrcMode == nullptr) ? false : true);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_BRC_SOFTWARE_IN_USE_ID, (m_swBrcMode == nullptr) ? false : true, m_osInterface->pOsContext);
 #endif // (_DEBUG || _RELEASE_INTERNAL)
 
     if (!(m_codecFunction == CODECHAL_FUNCTION_PAK || m_codecFunction == CODECHAL_FUNCTION_FEI_PAK))
@@ -1558,14 +1562,16 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_ENCODE_ME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_hmeSupported = (userFeatureData.u32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_ENCODE_16xME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 
         if (userFeatureData.i32Data == 0 || userFeatureData.i32Data == 1)
         {
@@ -1585,35 +1591,40 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_FLATNESS_CHECK_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_flatnessCheckSupported = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_STATIC_FRAME_DETECTION_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bStaticFrameDetectionEnable = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_ADAPTIVE_SEARCH_WINDOW_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bApdatvieSearchWindowEnable = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_FORCE_TO_SKIP_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bForceToSkipEnable = (userFeatureData.u32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_SLIDING_WINDOW_SIZE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         dwSlidingWindowSize = userFeatureData.u32Data;
 
         // Colorbit support (encoding multiple slices in parallel)
@@ -1623,7 +1634,8 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_COLOR_BIT_SUPPORT_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_colorbitSupported = (userFeatureData.i32Data) ? true : false;
 #endif
 
@@ -1633,7 +1645,8 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_GROUP_ID_SELECT_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_groupIdSelectSupported = (userFeatureData.i32Data) ? true : false;
 #endif
 
@@ -1643,7 +1656,8 @@ MOS_STATUS CodechalEncodeAvcEnc::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_GROUP_ID_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_groupId = (uint8_t)userFeatureData.i32Data;
 #endif
     }
@@ -1840,7 +1854,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_SINGLE_TASK_PHASE_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_singleTaskPhaseSupported = (userFeatureData.i32Data) ? true : false;
 
     // Set interleaved scaling output to support PAFF.
@@ -1852,28 +1867,32 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_ENCODE_MULTIPRED_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bMultiPredEnable = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_FTQ_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bFTQEnable = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_CAF_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bCAFSupported = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_CAF_DISABLE_HD_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bCAFDisableHD = (userFeatureData.i32Data) ? true : false;
 
         ucMbBrcSupportCaps = 1;
@@ -1884,7 +1903,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
             MOS_UserFeature_ReadValue_ID(
                 nullptr,
                 __MEDIA_USER_FEATURE_VALUE_AVC_MB_BRC_ENABLE_ID,
-                &userFeatureData);
+                &userFeatureData,
+                m_osInterface->pOsContext);
             if (userFeatureData.i32Data == 0 || userFeatureData.i32Data == 1)
             {
                 bMbBrcUserFeatureKeyControl = true;
@@ -1896,14 +1916,16 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_MULTIREF_QP_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         bMultiRefQpEnabled = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_AVC_ENCODE_32xME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
 
         if (userFeatureData.i32Data == 0 || userFeatureData.i32Data == 1)
         {
@@ -1921,7 +1943,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ROUNDING_INTER_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bRoundingInterEnable = (userFeatureData.i32Data) ? true : false;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1930,7 +1953,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ROUNDING_INTER_P_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     dwRoundingInterP = userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1939,7 +1963,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ROUNDING_INTER_B_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     dwRoundingInterB = userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1948,7 +1973,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ROUNDING_INTER_BREF_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     dwRoundingInterBRef = userFeatureData.i32Data;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -1957,28 +1983,32 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ADAPTIVE_ROUNDING_INTER_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bAdaptiveRoundingInterEnable = (userFeatureData.i32Data) ? true : false;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_SKIP_BIAS_ADJUSTMENT_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bSkipBiasAdjustmentSupported = (userFeatureData.i32Data) ? true : false;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_ADAPTIVE_INTRA_SCALING_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bAdaptiveIntraScalingEnable = (userFeatureData.i32Data) ? true : false;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_OLD_MODE_COST_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bOldModeCostEnable = (userFeatureData.i32Data) ? true : false;
 
     //Check if ATD has been disabled by user feature key. The TU check happens in CodecHalAvcEncode_SetPictureStructs()
@@ -1987,7 +2017,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ADAPTIVE_TRANSFORM_DECISION_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_adaptiveTransformDecisionEnabled = (userFeatureData.i32Data) ? true : false;
 
     // add user feature key to test FBR Bypass on SKL
@@ -1995,7 +2026,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_FBR_BYPASS_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bFBRBypassEnable = (userFeatureData.i32Data) ? true : false;
 
     // add user feature key to enable/disable variance computation in BRC kernel
@@ -2003,7 +2035,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AVC_BRC_VAR_COMPU_BYPASS_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     bBRCVarCompuBypass = (userFeatureData.i32Data) ? true : false;
 
     // add user feature key to switch on/off ARB WA of CNL AVC MBEnc hang
@@ -2011,7 +2044,8 @@ MOS_STATUS CodechalEncodeAvcEnc::InitializeState()
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENABLE_CNL_AVC_ENCODE_ARB_WA_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     if ((userFeatureData.i32Data) == 0)
     {
         MEDIA_WR_WA(m_waTable, WaArbitraryNumMbsInSlice, 0);
@@ -5559,9 +5593,6 @@ MOS_STATUS CodechalEncodeAvcEnc::SetPictureStructs()
         bUseMbEncAdvKernel = true;
     }
 
-    // Force enable HME if BRC is enabled
-    m_hmeEnabled = bBrcEnabled ? m_pictureCodingType != I_TYPE : m_hmeEnabled;
-
     bMbEncIFrameDistEnabled =
         bBrcDistortionBufferSupported &&
         bBrcEnabled &&
@@ -6378,7 +6409,7 @@ MOS_STATUS CodechalEncodeAvcEnc::ExecuteKernelFunctions()
         if (((sliceType == SLICE_B)) &&
             (m_avcPicParam->weighted_bipred_idc == EXPLICIT_WEIGHTED_INTER_PRED_MODE))
         {
-            for (i=0; i<(m_avcPicParam->num_ref_idx_l1_active_minus1+1); i++)
+            for (i=0; i<(slcParams->num_ref_idx_l1_active_minus1+1); i++)
             {
                 // Weighted Pred to be applied for L1
                 if((slcParams->luma_weight_flag[LIST_1] & 1 << i) && (i < CODEC_AVC_MAX_BACKWARD_WP_FRAME))
@@ -6398,13 +6429,13 @@ MOS_STATUS CodechalEncodeAvcEnc::ExecuteKernelFunctions()
     userFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;
     userFeatureWriteData.Value.i32Data = bUseWeightedSurfaceForL0;
     userFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_WEIGHTED_PREDICTION_L0_IN_USE_ID;
-    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1);
+    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, m_osInterface->pOsContext);
 
     // Weighted prediction for L1 Reporting
     userFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;
     userFeatureWriteData.Value.i32Data = bUseWeightedSurfaceForL1;
     userFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_WEIGHTED_PREDICTION_L1_IN_USE_ID;
-    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1);
+    MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, m_osInterface->pOsContext);
 
 #endif // _DEBUG || _RELEASE_INTERNAL
 
@@ -7013,7 +7044,7 @@ MOS_STATUS CodechalEncodeAvcEnc::ExecuteSliceLevel()
 
         CODECHAL_DEBUG_TOOL(
             if (!m_mmcUserFeatureUpdated) {
-                CODECHAL_UPDATE_ENCODE_MMC_USER_FEATURE(m_reconSurface);
+                CODECHAL_UPDATE_ENCODE_MMC_USER_FEATURE(m_reconSurface, m_osInterface->pOsContext);
                 m_mmcUserFeatureUpdated = true;
             })
 
@@ -7087,38 +7118,38 @@ MOS_STATUS CodechalEncodeAvcEnc::UserFeatureKeyReport()
     CODECHAL_ENCODE_CHK_NULL_RETURN(m_avcSeqParam);
 
     // AVC Encode BRC Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_BRC_ENABLE_ID, bBrcEnabled);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_BRC_ENABLE_ID, bBrcEnabled, m_osInterface->pOsContext);
 
     // AVC HME Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_ME_IN_USE_ID, m_hmeSupported);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_ME_IN_USE_ID, m_hmeSupported, m_osInterface->pOsContext);
 
     // AVC SuperHME Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_16xME_IN_USE_ID, m_16xMeSupported);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_16xME_IN_USE_ID, m_16xMeSupported, m_osInterface->pOsContext);
 
     // AVC UltraHME Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_32xME_IN_USE_ID, m_32xMeSupported);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_32xME_IN_USE_ID, m_32xMeSupported, m_osInterface->pOsContext);
 
     // AVC RateControl Method Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_RATECONTROL_METHOD_ID, m_avcSeqParam->RateControlMethod);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_RATECONTROL_METHOD_ID, m_avcSeqParam->RateControlMethod, m_osInterface->pOsContext);
 
     // AVC Adaptive Transform Decision Enable Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ADAPTIVE_TRANSFORM_DECISION_ENABLE_ID, m_adaptiveTransformDecisionEnabled);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ADAPTIVE_TRANSFORM_DECISION_ENABLE_ID, m_adaptiveTransformDecisionEnabled, m_osInterface->pOsContext);
 
     // FBR Bypass Enable Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_FBR_BYPASS_ENABLE_ID, bFBRBypassEnable);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_FBR_BYPASS_ENABLE_ID, bFBRBypassEnable, m_osInterface->pOsContext);
 
     // Static frame detection Enable Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_STATIC_FRAME_DETECTION_ENABLE_ID, bStaticFrameDetectionEnable);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_STATIC_FRAME_DETECTION_ENABLE_ID, bStaticFrameDetectionEnable, m_osInterface->pOsContext);
 
     // Adaptive Search Windows Enable Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_ADAPTIVE_SEARCH_WINDOW_ENABLE_ID, bApdatvieSearchWindowEnable);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_ADAPTIVE_SEARCH_WINDOW_ENABLE_ID, bApdatvieSearchWindowEnable, m_osInterface->pOsContext);
 
     // AVC FTQ Reporting
 #if (_DEBUG || _RELEASE_INTERNAL)
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_FTQ_IN_USE_ID, bFTQEnable);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_FTQ_IN_USE_ID, bFTQEnable, m_osInterface->pOsContext);
 
     // AVC CAF Reporting
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_CAF_IN_USE_ID, bCAFEnable);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_AVC_CAF_IN_USE_ID, bCAFEnable, m_osInterface->pOsContext);
 
 #endif // _DEBUG || _RELEASE_INTERNAL
 
@@ -8877,15 +8908,16 @@ MOS_STATUS CodechalEncodeAvcEnc::GenericEncodePictureLevel(PCODECHAL_ENCODE_AVC_
         // of the BB and keep the current frame's tag at the end of the BB. There will be a delay for tag update but it should be fine
         // as long as Dec/VP/Enc won't depend on this PAK so soon.
         MHW_MI_STORE_DATA_PARAMS                        params;
-        MOS_RESOURCE                                    globalGpuContextSyncTagBuffer;
-        uint32_t                                           value;
+        PMOS_RESOURCE                                   globalGpuContextSyncTagBuffer = nullptr;
+        uint32_t                                        value;
 
         CODECHAL_HW_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
             m_osInterface,
-            &globalGpuContextSyncTagBuffer));
+            globalGpuContextSyncTagBuffer));
+        CODECHAL_HW_CHK_NULL_RETURN(globalGpuContextSyncTagBuffer);
 
         value = m_osInterface->pfnGetGpuStatusTag(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
-        params.pOsResource = &globalGpuContextSyncTagBuffer;
+        params.pOsResource = globalGpuContextSyncTagBuffer;
         params.dwResourceOffset = m_osInterface->pfnGetGpuStatusTagOffset(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         params.dwValue = (value > 0) ? (value - 1) : 0;
         CODECHAL_HW_CHK_STATUS_RETURN(m_miInterface->AddMiStoreDataImmCmd(&cmdBuffer, &params));
@@ -9042,10 +9074,6 @@ MOS_STATUS CodechalEncodeAvcEnc::ExecutePreEnc(EncoderParams* encodeParams)
     CODECHAL_ENCODE_CHK_STATUS_MESSAGE_RETURN(ResetStatusReport(),
         "ResetStatusReprot failed.");
 #else
-    // if(GFX_IS_RENDERCORE(m_hwInterface->GetPlatform(), IGFX_GEN8_CORE)) //WA for G8
-    // {
-    //     eStatus = pEncoder->pfnResetStatusReport(pEncoder);
-    // }
     CODECHAL_ENCODE_CHK_STATUS_MESSAGE_RETURN(ResetStatusReport(),
         "ResetStatusReprot failed.");
 #endif

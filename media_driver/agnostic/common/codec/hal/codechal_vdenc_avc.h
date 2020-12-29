@@ -34,10 +34,17 @@
 #define CODECHAL_VDENC_AVC_MMIO_MFX_LRA_2_VMC240    0x000002D3
 #define CODECHAL_ENCODE_AVC_BRC_MIN_QP                      1
 #define CODECHAL_VDENC_AVC_MB_SLICE_TRHESHOLD               12
-#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_REENCODE_MASK     (1<<31)
+
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_REENCODE_MASK                  (1 << 31)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_SKIP_FRAME_MASK                (1 << 30)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_ERROR_MASK                     (1 << 29)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_SCENE_CHANGE_MASK              (1 << 28)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_ARITHMETIC_OVERFLOW_ERROR_MASK (1 << 27)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_MEMORY_ACCESS_ERROR_MASK       (1 << 26)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_HISTORY_BUFFER_ERROR_MASK      (1 << 25)
+#define CODECHAL_VDENC_AVC_BRC_HUC_STATUS_DMEM_ERROR_MASK                (1 << 24)
 
 #define CODECHAL_VDENC_AVC_BRC_MIN_QP                       10
-
 #define CODECHAL_VDENC_AVC_CQP_NUM_OF_PASSES                1    // No standalone PAK IPCM pass for VDENC
 
 #define CODECHAL_VDENC_AVC_BRC_HISTORY_BUF_SIZE             0x1000
@@ -574,6 +581,31 @@ public:
     bool ProcessRoiDeltaQp();
 
     //!
+    //! \brief    Add store HUC_ERROR_STATUS register command in the command buffer
+    //!
+    //! \param    [in] mmioRegisters
+    //!           Pointer to mmio huc register
+    //! \param    [in] cmdBuffer
+    //!           Pointer to the command buffer
+    //! \param    [in] addToEncodeStatus
+    //!           Flag to indicate whether huc error status will be stored in encode status buffer
+    //!
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS AddHucOutputRegistersHandling(
+        MmioRegistersHuc*   mmioRegisters,
+        PMOS_COMMAND_BUFFER cmdBuffer,
+        bool                addToEncodeStatus)
+    {
+        // HUC store HUC_STATUS only starting with G11
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual MOS_STATUS StoreHucErrorStatus(MmioRegistersHuc* mmioRegisters, PMOS_COMMAND_BUFFER cmdBuffer, bool addToEncodeStatus);
+
+
+    //!
     //! \brief    VDENC BRC InitReset HuC FW Cmd.
     //!
     //! \return   MOS_STATUS
@@ -870,6 +902,9 @@ protected:
     uint8_t                                     *m_vdencMvCostTbl = nullptr;       //!< Pointer to VDEnc MV Cost Table
     uint8_t                                     *m_vdencHmeMvCostTbl = nullptr;    //!< Pointer to VDEnc HME MV Cost Table
 
+    const uint16_t                              *m_vdencSSCThrsTblI = nullptr;     //!< Pointer to VDEnc Slice size thresholds table for I picture
+    const uint16_t                              *m_vdencSSCThrsTblP = nullptr;     //!< Pointer to VDEnc Slice size thresholds table for P picture
+
     // SEI
     CodechalEncodeSeiData m_seiData;         //!< Encode SEI data parameter.
     uint32_t              m_seiDataOffset;   //!< Encode SEI data offset.
@@ -935,7 +970,7 @@ protected:
     bool                                m_forceToSkipEnable;                                            //!< Force to Skip Flag.
     uint32_t                            m_vdencBrcInitDmemBufferSize;                                   //!< Brc Init-Dmem Buffer Size.
     uint32_t                            m_vdencBrcUpdateDmemBufferSize;                                 //!< Brc Update-Dmem Buffer Size.
-    uint32_t                            m_vdencColocatedMVBufferSize;                                     //!< Colocated MV Read / Write Buffer Size.
+    uint32_t                            m_vdencColocatedMVBufferSize;                                   //!< Colocated MV Read / Write Buffer Size.
     bool                                m_vdencStaticFrame;                                             //!< Static Frame Indicator.
     uint32_t                            m_vdencStaticRegionPct;                                         //!< Ratio of Static Region in One Frame.
     bool                                m_oneOnOneMapping = false;                                      //!< Indicate if one on one ref index mapping is enabled
@@ -951,9 +986,6 @@ protected:
     static constexpr uint8_t m_maxNumNativeRoi = 3;   //!< Number of native ROI supported by VDEnc HW
 
 protected:
-
-    static const uint32_t AVC_I_SLICE_SIZE_MINUS = 500;                                    //!< VDENC I SLICE threshold
-    static const uint32_t AVC_P_SLICE_SIZE_MINUS = 500;                                    //!< VDENC P SLICE threshold
     static const uint32_t SFD_OUTPUT_BUFFER_SIZE = 128;                                    //!< SFD_OUTPUT_BUFFER_SIZE
     static const uint32_t AVC_BRC_STATS_BUF_SIZE = 80;                                     //!< VDENC BRC statistics buffer size
     static const uint32_t AVC_BRC_PAK_STATS_BUF_SIZE = 204;                                //!< VDENC BRC PAK statistics buffer size
@@ -974,8 +1006,6 @@ protected:
     static const uint8_t  BRC_UPD_slwin_global_rate_ratio_threshold[7];                    //!< Slide Window Global Rate Ratio Threshold
     static const uint8_t  BRC_UPD_start_global_adjust_mult[5];                             //!< Start Global Adjust Multiply
     static const uint8_t  BRC_UPD_start_global_adjust_div[5];                              //!< Start Global Adjust Division
-    static const uint16_t BRC_UPD_SLCSZ_UPD_THRDELTAP_100Percent_U16[42];                  //!< Slice Size Threshold Delta for P frame.
-    static const uint16_t BRC_UPD_SLCSZ_UPD_THRDELTAI_100Percent_U16[42];                  //!< Slice Size Threshold Delta for I frame.
     static const int8_t   BRC_UPD_global_rate_ratio_threshold_qp[8];                       //!< Global Rate Ratio QP Threshold
     static const uint32_t AVC_Mode_Cost[2][12][CODEC_AVC_NUM_QP];                          //!< Mode Cost Table.
     static const int8_t   BRC_UPD_GlobalRateQPAdjTabI_U8[64];                              //!< I Picture Global Rate QP Adjustment Table.
@@ -1030,6 +1060,9 @@ protected:
     static const uint32_t InterRoundingB[NUM_TARGET_USAGE_MODES];                          //!< B Picture InterRounding Table.
     static const uint32_t InterRoundingBRef[NUM_TARGET_USAGE_MODES];                       //!< B Ref Picture InterRounding Table.
     static const uint8_t  AdaptiveInterRoundingB[CODEC_AVC_NUM_QP];                        //!< B Picture Adaptive InterRounding Table.
+
+    static const uint16_t SliceSizeThrsholdsI[CODEC_AVC_NUM_QP];                           //!< I picture slice size conformance thresholds table.
+    static const uint16_t SliceSizeThrsholdsP[CODEC_AVC_NUM_QP];                           //!< P picture slice size conformance thresholds table.
 
 #if USE_CODECHAL_DEBUG_TOOL
 protected:
@@ -1291,10 +1324,8 @@ MOS_STATUS CodechalVdencAvcState::SetDmemHuCBrcUpdateImpl(CODECHAL_VDENC_AVC_BRC
 
         for (uint8_t k = 0; k < 42; k++)
         {
-            hucVDEncBrcDmem->UPD_SLCSZ_UPD_THRDELTAI_U16[k] =
-                MOS_MIN(avcPicParams->SliceSizeInBytes - 150, BRC_UPD_SLCSZ_UPD_THRDELTAI_100Percent_U16[k]);
-            hucVDEncBrcDmem->UPD_SLCSZ_UPD_THRDELTAP_U16[k] =
-                MOS_MIN(avcPicParams->SliceSizeInBytes - 150, BRC_UPD_SLCSZ_UPD_THRDELTAP_100Percent_U16[k]);
+            hucVDEncBrcDmem->UPD_SLCSZ_UPD_THRDELTAI_U16[k] = MOS_MIN(avcPicParams->SliceSizeInBytes - 150, m_vdencSSCThrsTblI[k+10]);
+            hucVDEncBrcDmem->UPD_SLCSZ_UPD_THRDELTAP_U16[k] = MOS_MIN(avcPicParams->SliceSizeInBytes - 150, m_vdencSSCThrsTblP[k+10]);
         }
     }
     else

@@ -50,6 +50,11 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     virtual ~CodechalVdencAvcStateG12();
 
     bool CheckSupportedFormat(PMOS_SURFACE surface) override;
+    virtual void AdjustNumRefIdx(uint32_t &numRefIdxL0Minus1, uint32_t &numRefIdxL1Minus1)
+    {
+        numRefIdxL0Minus1 = m_avcSliceParams->num_ref_idx_l0_active_minus1;
+        numRefIdxL1Minus1 = m_avcSliceParams->num_ref_idx_l1_active_minus1;
+    }
 
     MOS_STATUS InitializeState() override;
 
@@ -58,6 +63,13 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     MOS_STATUS GetTrellisQuantization(
         PCODECHAL_ENCODE_AVC_TQ_INPUT_PARAMS params,
         PCODECHAL_ENCODE_AVC_TQ_PARAMS       trellisQuantParams) override;
+
+    virtual MOS_STATUS AddHucOutputRegistersHandling(
+        MmioRegistersHuc* mmioRegisters,
+        PMOS_COMMAND_BUFFER cmdBuffer,
+        bool                addToEncodeStatus) override;
+
+    virtual MOS_STATUS InsertConditionalBBEndWithHucErrorStatus(PMOS_COMMAND_BUFFER cmdBuffer);
 
     MOS_STATUS HuCBrcDummyStreamObject(PMOS_COMMAND_BUFFER cmdBuffer) override { return MOS_STATUS_SUCCESS; }
 
@@ -129,7 +141,7 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    MOS_STATUS SetGpuCtxCreatOption() override;
+    virtual MOS_STATUS SetGpuCtxCreatOption() override;
     //!
     //! \brief    Set And Populate VE Hint parameters
     //! \details  Set Virtual Engine hint parameter and populate it to primary cmd buffer attributes
@@ -183,6 +195,8 @@ protected:
     void SetMfxPipeModeSelectParams(
         const CODECHAL_ENCODE_AVC_GENERIC_PICTURE_LEVEL_PARAMS& genericParam,
         MHW_VDBOX_PIPE_MODE_SELECT_PARAMS& param) override;
+
+    virtual void CopyMBQPDataToStreamIn(CODECHAL_VDENC_STREAMIN_STATE* pData, uint8_t* pInputData);
 
 #if USE_CODECHAL_DEBUG_TOOL
 protected:

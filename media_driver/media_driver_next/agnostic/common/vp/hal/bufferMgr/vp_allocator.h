@@ -140,6 +140,34 @@ public:
     VP_SURFACE* AllocateVpSurface(VP_SURFACE &vphalSurf);
 
     //!
+    //! \brief  Allocate vp surface
+    //! \param  [in] osSurf
+    //!         The surface that vp surface created from. The resource will be reused in vp surface.
+    //! \param  [in] colorSpace
+    //!         colorSpace of vp surface.
+    //! \param  [in] chromaSiting
+    //!         chromaSiting of vp surface.
+    //! \param  [in] rcSrc
+    //!         rcSrc of vp surface.
+    //! \param  [in] rcDst
+    //!         rcDst of vp surface.
+    //! \param  [in] SurfType
+    //!         SurfType of vp surface.
+    //! \param  [in] updatePlaneOffset
+    //!         true, update plane offset of vp surface, otherwise, use the one in osSurf.
+    //! \return VP_SURFACE*
+    //!         return the pointer to VP_SURFACE
+    //!
+    VP_SURFACE *AllocateVpSurface(
+        MOS_SURFACE &osSurf,
+        VPHAL_CSPACE colorSpace,
+        uint32_t chromaSiting,
+        RECT rcSrc,
+        RECT rcDst,
+        VPHAL_SURFACE_TYPE SurfType,
+        bool updatePlaneOffset = false);
+
+    //!
     //! \brief  Allocate vp surface without resource
     //! \return VP_SURFACE*
     //!         return the pointer to VP_SURFACE
@@ -322,6 +350,8 @@ public:
     //!           Compression Mode
     //! \param    [out] allocated
     //!           true if allocated, false for not
+    //! \param    [in] resUsageType
+    //!           resource usage type for cache policy
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success. Error code otherwise
     //!
@@ -335,7 +365,8 @@ public:
         uint32_t                height,
         bool                    compressible,
         MOS_RESOURCE_MMC_MODE   compressionMode,
-        bool                    &allocated);
+        bool                    &allocated,
+        MOS_HW_RESOURCE_DEF     resUsageType = MOS_HW_RESOURCE_DEF_MAX);
 
     //!
     //! \brief    Reallocates the VP Surface
@@ -364,6 +395,8 @@ public:
     //!           true if allocated, false for not
     //! \param    [in] zeroOnAllocate
     //!           zero when surface allocated
+    //! \param    [in] resUsageType
+    //!           resource usage type for cache policy
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success. Error code otherwise
     //!
@@ -378,7 +411,8 @@ public:
         bool                    compressible,
         MOS_RESOURCE_MMC_MODE   compressionMode,
         bool                    &allocated,
-        bool                    zeroOnAllocate = 0);
+        bool                    zeroOnAllocate = 0,
+        MOS_HW_RESOURCE_DEF     resUsageType   = MOS_HW_RESOURCE_DEF_MAX);
 
     //!
     //! \brief    Unified OS fill Resource
@@ -490,6 +524,19 @@ public:
         PMOS_RESOURCE         osResource,
         bool                  bWriteOperation);
 
+    //!
+    //! \brief    Update the usage type of resource for cache policy
+    //! \details  Update the usage type of resource for cache policy
+    //! \param    PMOS_RESOURCE OsResource
+    //!           [in] OS resource sturcture
+    //! \param    MOS_HW_RESOURCE_DEF resUsageType
+    //!           [in] MOS_HW_RESOURCE_DEF to be set
+    //! \return   VOID
+    //!
+    MOS_STATUS UpdateResourceUsageType(
+        PMOS_RESOURCE           osResource,
+        MOS_HW_RESOURCE_DEF     resUsageType);
+
 protected:
     //!
     //! \brief    Set mmc flags to surface
@@ -499,6 +546,14 @@ protected:
     //! \return   MOS_STATUS
     //!
     MOS_STATUS SetMmcFlags(MOS_SURFACE &osSurface);
+    //!
+    //! \brief    Update surface plane offset
+    //! \details  Update surface plane offset with render offset
+    //! \param    surf
+    //!           [in, out] surface to be updated.
+    //! \return   VOID
+    //!
+    void UpdateSurfacePlaneOffset(MOS_SURFACE &surf);
 
     PMOS_INTERFACE  m_osInterface   = nullptr;
     Allocator       *m_allocator    = nullptr;

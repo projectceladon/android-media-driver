@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,19 +30,23 @@
 #include <vector>
 #include "hw_filter.h"
 
+#include "vp_packet_shared_context.h"
+//#include "vp_kernelset.h"
+
 class MediaScalability;
 class MediaContext;
 
 namespace vp {
 
 class VpPlatformInterface;
+class VpKernelSet;
 
 class PacketFactory
 {
 public:
     PacketFactory(VpPlatformInterface *vpPlatformInterface);
     virtual ~PacketFactory();
-    MOS_STATUS Initialize(MediaTask *pTask, PVP_MHWINTERFACE pHwInterface, PVpAllocator pAllocator, VPMediaMemComp *pMmc);
+    MOS_STATUS Initialize(MediaTask *pTask, PVP_MHWINTERFACE pHwInterface, PVpAllocator pAllocator, VPMediaMemComp *pMmc, VP_PACKET_SHARED_CONTEXT *packetSharedContext, VpKernelSet* vpKernels);
     VpCmdPacket *CreatePacket(EngineType type);
     void ReturnPacket(VpCmdPacket *&pPacket);
 
@@ -60,6 +64,8 @@ protected:
     PVpAllocator        m_pAllocator = nullptr;
     VPMediaMemComp      *m_pMmc = nullptr;
     VpPlatformInterface *m_vpPlatformInterface = nullptr;
+    VpKernelSet* m_kernelSet = nullptr;
+    VP_PACKET_SHARED_CONTEXT *m_packetSharedContext = nullptr;
 };
 
 class PacketPipe
@@ -76,6 +82,11 @@ public:
         return m_outputPipeMode;
     }
 
+    bool IsVeboxFeatureInuse()
+    {
+        return m_veboxFeatureInuse;
+    }
+
 private:
     VpCmdPacket *CreatePacket(EngineType type);
     MOS_STATUS SetOutputPipeMode(EngineType engineType);
@@ -83,6 +94,7 @@ private:
     PacketFactory &m_PacketFactory;
     std::vector<VpCmdPacket *> m_Pipe;
     VPHAL_OUTPUT_PIPE_MODE m_outputPipeMode = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+    bool m_veboxFeatureInuse = false;
 };
 
 class PacketPipeFactory

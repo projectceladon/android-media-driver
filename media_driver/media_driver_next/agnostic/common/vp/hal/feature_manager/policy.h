@@ -56,29 +56,52 @@ public:
     virtual ~Policy();
     MOS_STATUS CreateHwFilter(SwFilterPipe &subSwFilterPipe, HwFilter *&pFilter);
     MOS_STATUS Initialize();
+    //!
+    //! \brief    Check whether VEBOX-SFC Format Supported
+    //! \details  Check whether VEBOX-SFC Format Supported.
+    //! \param    inputFormat
+    //!           [in] Format of Input Frame
+    //! \param    outputFormat
+    //!           [in] Format of Output Frame
+    //! \return   bool
+    //!           Return true if supported, otherwise failed
+    //!
+    bool IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput);
 
 protected:
     MOS_STATUS GetHwFilterParam(SwFilterPipe& subSwFilterPipe, HW_FILTER_PARAMS& params);
-    MOS_STATUS RegisterFeatures();
+    virtual MOS_STATUS RegisterFeatures();
     MOS_STATUS ReleaseHwFilterParam(HW_FILTER_PARAMS &params);
     MOS_STATUS GetExecuteCaps(SwFilterPipe& subSwFilterPipe, HW_FILTER_PARAMS& params);
-    MOS_STATUS BuildExecutionEngines(SwFilterSubPipe& SwFilterPipe);
+    virtual MOS_STATUS BuildExecutionEngines(SwFilterSubPipe& SwFilterPipe);
 
     MOS_STATUS GetCSCExecutionCaps(SwFilter* feature);
     MOS_STATUS GetScalingExecutionCaps(SwFilter* feature);
     MOS_STATUS GetRotationExecutionCaps(SwFilter* feature);
     MOS_STATUS GetDenoiseExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetSteExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetTccExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetProcampExecutionCaps(SwFilter* feature);
     MOS_STATUS GetExecutionCaps(SwFilter* feature);
 
     MOS_STATUS BuildFilters(SwFilterPipe& subSwFilterPipe, HW_FILTER_PARAMS& params);
     MOS_STATUS UpdateFilterCaps(SwFilterPipe& subSwFilterPipe, VP_EngineEntry& engineCaps, VP_EXECUTE_CAPS &caps);
     MOS_STATUS BuildExecuteFilter(SwFilterPipe& subSwFilterPipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
+    MOS_STATUS BuildExecuteHwFilter(SwFilterPipe& subSwFilterPipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
     MOS_STATUS SetupExecuteFilter(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
     MOS_STATUS SetupFilterResource(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
-    MOS_STATUS UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, EngineType Type);
+    virtual MOS_STATUS UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, EngineType Type);
+    MOS_STATUS AddNewFilterOnVebox(
+        SwFilterPipe& featurePipe,
+        VP_EXECUTE_CAPS& caps,
+        HW_FILTER_PARAMS& params,
+        FeatureType featureType);
 
     MOS_STATUS AllocateVeboxExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
     MOS_STATUS AllocateSfcExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
+
+    bool IsVeboxSecurePathEnabled(SwFilterPipe& subSwFilterPipe, VP_EXECUTE_CAPS& caps);
+    virtual MOS_STATUS BuildVeboxSecureFilters(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
 
     std::map<FeatureType, PolicyFeatureHandler*> m_VeboxSfcFeatureHandlers;
     std::map<FeatureType, PolicyFeatureHandler*> m_RenderFeatureHandlers;
@@ -87,8 +110,8 @@ protected:
     VpInterface         &m_vpInterface;
     VP_SFC_ENTRY_REC    m_sfcHwEntry[Format_Count] = {};
     VP_VEBOX_ENTRY_REC  m_veboxHwEntry[Format_Count] = {};
-
-    uint32_t m_bypassCompMode = 0;
+    uint32_t            m_bypassCompMode = 0;
+    bool                m_initialized = false;
 };
 
 }

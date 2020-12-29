@@ -109,13 +109,13 @@ protected:
 struct _SFC_SCALING_PARAMS
 {
     // Scaling parameters
-
     uint32_t                        dwOutputFrameHeight;                        // Output Frame Height
     uint32_t                        dwOutputFrameWidth;                         // Output Frame Width
     uint32_t                        dwInputFrameHeight;                         // Input Frame Height
     uint32_t                        dwInputFrameWidth;                          // Input Frame Width
+    MOS_FORMAT                      inputFrameFormat;                           // Input Frame Format
 
-    uint32_t                        dwAVSFilterMode;                            // Bilinear, 5x5 or 8x8
+    bool                            bBilinearScaling;                           // true if bilinear scaling, otherwise avs scaling.
     uint32_t                        dwSourceRegionHeight;                       // Source/Crop region height
     uint32_t                        dwSourceRegionWidth;                        // Source/Crop region width
     uint32_t                        dwSourceRegionVerticalOffset;               // Source/Crop region vertical offset
@@ -129,6 +129,7 @@ struct _SFC_SCALING_PARAMS
 
     SFC_COLORFILL_PARAMS            sfcColorfillParams;                         // Colorfill Params
 
+    VPHAL_SCALING_MODE              sfcScalingMode;                             // Bilinear, Nearest, AVS and future extension (configured by AVS coefficients)
 };
 
 struct _SFC_CSC_PARAMS
@@ -142,7 +143,6 @@ struct _SFC_CSC_PARAMS
     MOS_FORMAT                      inputFormat;                                 // SFC Input Format
     MOS_FORMAT                      outputFormat;                                // SFC Output Format
     PVPHAL_IEF_PARAMS               iefParams;                                   // Vphal Params
-    uint32_t                        inputChromaSubSampling;                      // Chroma subsampling at SFC input
     uint32_t                        sfcSrcChromaSiting;                          // SFC Source Chroma Siting location
     uint32_t                        chromaDownSamplingVerticalCoef;              // Chroma DownSampling Vertical Coeff
     uint32_t                        chromaDownSamplingHorizontalCoef;            // Chroma DownSampling Horizontal Coeff
@@ -167,6 +167,52 @@ struct _VEBOX_DN_PARAMS
     bool                            bProgressive;
 };
 
+struct _VEBOX_STE_PARAMS
+{
+    bool                            bEnableSTE;                                 // STE Enabled
+    uint32_t                        dwSTEFactor;
+};
+
+struct _VEBOX_ACE_PARAMS
+{
+    bool                            bEnableACE;                                 // ACE Enabled
+    bool                            bAceLevelChanged;
+    uint32_t                        dwAceLevel;
+    uint32_t                        dwAceStrength;
+};
+
+struct _VEBOX_TCC_PARAMS
+{
+    bool                            bEnableTCC;                                 // TCC Enabled
+    uint8_t                         Red;
+    uint8_t                         Green;
+    uint8_t                         Blue;
+    uint8_t                         Cyan;
+    uint8_t                         Magenta;
+    uint8_t                         Yellow;
+};
+
+struct _VEBOX_CGC_PARAMS
+{
+    bool                                bEnableCGC;                                 // CGC Enabled
+    VPHAL_CSPACE                        colorSpace;
+    bool                                bExtendedSrcGamut;
+    bool                                bExtendedDstGamut;
+    VPHAL_GAMUT_MODE                    GCompMode;
+    uint32_t                            dwAttenuation;
+    float                               displayRGBW_x[4];
+    float                               displayRGBW_y[4];
+};
+
+struct _VEBOX_PROCAMP_PARAMS
+{
+    bool                            bEnableProcamp;                            // Procamp Enabled
+    float                           fBrightness;
+    float                           fContrast;
+    float                           fHue;
+    float                           fSaturation;
+};
+
 struct _VEBOX_CSC_PARAMS
 {
     bool                            bCSCEnabled;                                 // CSC Enabled
@@ -183,6 +229,15 @@ struct _VEBOX_CSC_PARAMS
     uint32_t                        chromaDownSamplingHorizontalCoef;            // Chroma DownSampling Horizontal Coeff
 };
 
+
+struct _VEBOX_UPDATE_PARAMS
+{
+    bool                            bSecureCopyVeboxState;
+    bool                            bDnEnabled;
+    bool                            bAutoDetect;
+    VPHAL_NOISELEVEL                NoiseLevel;
+};
+
 using SFC_SCALING_PARAMS    = _SFC_SCALING_PARAMS;
 using PSFC_SCALING_PARAMS   = SFC_SCALING_PARAMS * ;
 using SFC_CSC_PARAMS        = _SFC_CSC_PARAMS;
@@ -191,8 +246,20 @@ using SFC_ROT_MIR_PARAMS    = _SFC_ROT_MIR_PARAMS;
 using PSFC_ROT_MIR_PARAMS   = SFC_ROT_MIR_PARAMS * ;
 using VEBOX_DN_PARAMS       = _VEBOX_DN_PARAMS;
 using PVEBOX_DN_PARAMS      = VEBOX_DN_PARAMS *;
+using VEBOX_STE_PARAMS      = _VEBOX_STE_PARAMS;
+using PVEBOX_STE_PARAMS     = VEBOX_STE_PARAMS *;
+using VEBOX_ACE_PARAMS      = _VEBOX_ACE_PARAMS;
+using PVEBOX_ACE_PARAMS     = VEBOX_ACE_PARAMS *;
+using VEBOX_TCC_PARAMS      = _VEBOX_TCC_PARAMS;
+using PVEBOX_TCC_PARAMS     = VEBOX_TCC_PARAMS *;
+using VEBOX_CGC_PARAMS      = _VEBOX_CGC_PARAMS;
+using PVEBOX_CGC_PARAMS     = VEBOX_CGC_PARAMS *;
+using VEBOX_PROCAMP_PARAMS  = _VEBOX_PROCAMP_PARAMS;
+using PVEBOX_PROCAMP_PARAMS = VEBOX_PROCAMP_PARAMS *;
 using VEBOX_CSC_PARAMS      = _VEBOX_CSC_PARAMS;
 using PVEBOX_CSC_PARAMS     = VEBOX_CSC_PARAMS *;
+using VEBOX_UPDATE_PARAMS      = _VEBOX_UPDATE_PARAMS;
+using PVEBOX_UPDATE_PARAMS     = VEBOX_UPDATE_PARAMS *;
 
 class SwFilterPipe;
 class HwFilter;
@@ -299,6 +366,15 @@ public:
             return p;
         }
     }
+};
+
+struct HW_FILTER_PARAM
+{
+    FeatureType             type;
+    PVP_MHWINTERFACE        pHwInterface;
+    VP_EXECUTE_CAPS         vpExecuteCaps;
+    PacketParamFactoryBase *pPacketParamFactory                     = nullptr;
+    VpPacketParameter*    (*pfnCreatePacketParam)(HW_FILTER_PARAM&) = nullptr;
 };
 }
 

@@ -21,12 +21,14 @@
 */
 //!
 //! \file      codechal_hw.h 
-//! \brief         This modules implements HW interface layer to be used on all platforms on     all operating systems/DDIs, across CODECHAL components. 
+//! \brief     This modules implements HW interface layer to be used on all platforms on all operating systems/DDIs, across CODECHAL components. 
 //!
+
 #ifndef __CODECHAL_HW_H__
 #define __CODECHAL_HW_H__
 
 #include "codechal.h"
+#include "renderhal.h"
 #include "mhw_mi.h"
 #include "mhw_render.h"
 #include "mhw_state_heap.h"
@@ -43,6 +45,7 @@
 #include "media_interfaces_mhw.h"
 
 #include "gfxmacro.h"
+
 //------------------------------------------------------------------------------
 // Macros specific to MOS_CODEC_SUBCOMP_HW sub-comp
 //------------------------------------------------------------------------------
@@ -206,8 +209,7 @@ typedef enum _CODECHAL_MEDIA_STATE_TYPE
     CODECHAL_MEDIA_STATE_SW_SCOREBOARD_INIT                 = 60,
     CODECHAL_NUM_MEDIA_STATES                               = 61
 } CODECHAL_MEDIA_STATE_TYPE;
-
-C_ASSERT(CODECHAL_NUM_MEDIA_STATES == (CODECHAL_MEDIA_STATE_SW_SCOREBOARD_INIT + 1)); //!< update this and add new entry in the default SSEU table for each platform()
+C_ASSERT(CODECHAL_NUM_MEDIA_STATES == CODECHAL_MEDIA_STATE_SW_SCOREBOARD_INIT + 1);  //!< update this and add new entry in the default SSEU table for each platform()
 
 typedef enum _CODECHAL_SLICE_STATE
 {
@@ -367,6 +369,8 @@ protected:
     MhwMiInterface                  *m_miInterface = nullptr;         //!< Pointer to Mhw mi interface
     MhwCpInterface                  *m_cpInterface = nullptr;         //!< Pointer to Mhw cp interface
     MhwRenderInterface              *m_renderInterface = nullptr;     //!< Pointer to Mhw render interface
+    RENDERHAL_INTERFACE             *m_renderHal = nullptr;           //!< RenderHal interface
+    MhwCpInterface                  *m_renderHalCpInterface = nullptr;//!< Pointer to RenderHal cp interface
     MhwVeboxInterface               *m_veboxInterface = nullptr;      //!< Pointer to Mhw vebox interface
     MhwSfcInterface                 *m_sfcInterface = nullptr;        //!< Pointer to Mhw sfc interface
     MhwVdboxMfxInterface            *m_mfxInterface = nullptr;        //!< Pointer to Mhw mfx interface
@@ -375,6 +379,7 @@ protected:
     MhwVdboxVdencInterface          *m_vdencInterface = nullptr;      //!< Pointer to Mhw vdenc interface
 
     CODECHAL_SSEU_SETTING const         *m_ssEuTable = nullptr;       //!< Pointer to the default SSEU settings table
+    uint16_t                            m_numMediaStates = CODECHAL_NUM_MEDIA_STATES;  //!< number of media states
 
     MHW_MEMORY_OBJECT_CONTROL_PARAMS    m_cacheabilitySettings[MOS_CODEC_RESOURCE_USAGE_END_CODEC];  //!< Cacheability Settings list
 
@@ -395,6 +400,8 @@ protected:
     uint32_t                    m_sizeOfCmdMediaStateFlush = 0;  //!> Size of media state flush cmd
 
     bool                        m_noSeparateL3LlcCacheabilitySettings = false;   // No separate L3 LLC cacheability settings
+
+    bool                        m_disableScalability                  = false;   //!> Flag to indicate if disable scalability by default
 
 public:
     // Hardware dependent parameters
@@ -424,6 +431,12 @@ public:
     uint32_t                    m_numRequestedEuSlices = 0;                     //!> Number of requested Slices
     uint32_t                    m_numRequestedSubSlices = 0;                    //!> Number of requested Sub-slices
     uint32_t                    m_numRequestedEus = 0;                          //!> Number of requested EUs
+#if (_DEBUG || _RELEASE_INTERNAL)
+    bool                        m_numRequestedOverride = false;                 //!> Flag to indicate whether these params are set by Reg
+    uint32_t                    m_numRequestedEuSlicesOverride = 0;             //!> Number of requested Slices set by Reg
+    uint32_t                    m_numRequestedSubSlicesOverride = 0;            //!> Number of requested Sub-slices set by Reg
+    uint32_t                    m_numRequestedEusOverride = 0;                  //!> Number of requested EUs set by Reg
+#endif
 
     uint32_t                    m_ssdResolutionThreshold = 0;                   //!> Slice shutdown resolution threshold
     uint32_t                    m_ssdTargetUsageThreshold = 0;                  //!> Slice shutdown target usage threshold
@@ -439,7 +452,8 @@ public:
     CodechalHwInterface(
         PMOS_INTERFACE    osInterface,
         CODECHAL_FUNCTION codecFunction,
-        MhwInterfaces     *mhwInterfaces);
+        MhwInterfaces     *mhwInterfaces,
+        bool              disableScalability = false);
 
     //!
     //! \brief    Copy constructor
@@ -582,6 +596,18 @@ public:
     inline MhwRenderInterface *GetRenderInterface()
     {
         return m_renderInterface;
+    }
+
+    //!
+    //! \brief    Get renderHal interface
+    //! \details  Get renderHal interface in codechal hw interface
+    //!
+    //! \return   [out] RENDERHAL_INTERFACE*
+    //!           Interface got.
+    //!
+    inline RENDERHAL_INTERFACE *GetRenderHalInterface()
+    {
+        return m_renderHal;
     }
 
     //!
@@ -997,8 +1023,8 @@ public:
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    MOS_STATUS Initialize(
-        CodechalSetting * settings);
+    virtual MOS_STATUS Initialize(
+        CodechalSetting *settings);
 
     //!
     //! \brief    Get meida object buffer size
@@ -1531,7 +1557,34 @@ public:
         return m_osInterface ? m_osInterface->bSimIsActive : false;
     }
 
+    //!
+    //! \brief    Check if disable scalability by default
+    //! \return   bool
+    //!           True if it is to disable scalability by default, else it is not.
+    //!
+    bool IsDisableScalability()
+    {
+        return m_disableScalability;
+    }
+
     virtual bool UsesRenderEngine(CODECHAL_FUNCTION codecFunction, uint32_t standard);
+
+    //!
+    //! \brief    Get film grain kernel info
+    //! \details  Get kernel base and size
+    //!
+    //! \param    [out] kernelBase
+    //!           base addr of film grain kernels
+    //!
+    //! \param    [out] kernelSize
+    //!           size of film grain kernels
+    //!
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS GetFilmGrainKernelInfo(
+        uint8_t*    &kernelBase,
+        uint32_t    &kernelSize);
 
     //! \brief    default disable vdbox balancing by UMD
     bool bEnableVdboxBalancingbyUMD = false;

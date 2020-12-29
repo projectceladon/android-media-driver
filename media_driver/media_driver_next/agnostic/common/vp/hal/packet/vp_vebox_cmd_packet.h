@@ -213,6 +213,11 @@
 #define VPHAL_VEBOX_DI_LPFWTLUT7_SD_NATUAL                          255
 #define VPHAL_VEBOX_DI_LPFWTLUT7_HD_NATUAL                          255
 
+//!
+//! \brief STE factor
+//!
+
+#define MHW_STE_FACTOR_MAX                      9  // STE factor is 0 ~ 9
 
 //!
 //! \brief  Chroma Denoise params
@@ -384,8 +389,6 @@ public:
         MOS_COMMAND_BUFFER                      &CmdBuffer,
         PRENDERHAL_GENERIC_PROLOG_PARAMS        pGenericPrologParams);
 
-    virtual MOS_STATUS InitSfcStateParams();
-
     //!
     //! \brief    Setup Scaling Params for Vebox/SFC
     //! \details  Setup surface Scaling Params for Vebox/SFC
@@ -455,6 +458,36 @@ public:
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS SetDnParams(PVEBOX_DN_PARAMS dnParams);
+
+    //!
+    //! \brief    Setup STE Params for Vebox
+    //! \details  Setup surface STE Params for Vebox
+    //! \param    [in] steParams
+    //!           STE Params
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS SetSteParams(PVEBOX_STE_PARAMS steParams);
+
+    //!
+    //! \brief    Setup TCC Params for Vebox
+    //! \details  Setup surface TCC Params for Vebox
+    //! \param    [in] tccParams
+    //!           TCC Params
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS SetTccParams(PVEBOX_TCC_PARAMS tccParams);
+
+    //!
+    //! \brief    Setup Procamp Params for Vebox
+    //! \details  Setup surface Procamp Params for Vebox
+    //! \param    [in] procampParams
+    //!           Procamp Params
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS SetProcampParams(PVEBOX_PROCAMP_PARAMS procampParams);
 
     //!
     //! \brief    Get DN luma parameters
@@ -697,8 +730,9 @@ public:
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS IsCmdParamsValid(
-        const MHW_VEBOX_STATE_CMD_PARAMS        &VeboxStateCmdParams,
-        const MHW_VEBOX_DI_IECP_CMD_PARAMS      &VeboxDiIecpCmdParams);
+        const MHW_VEBOX_STATE_CMD_PARAMS            &VeboxStateCmdParams,
+        const MHW_VEBOX_DI_IECP_CMD_PARAMS          &VeboxDiIecpCmdParams,
+        const VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS  &VeboxSurfaceStateCmdParams);
 
     //!
     //! \brief    Copy Vebox state heap
@@ -765,8 +799,6 @@ protected:
     //! \param    [out] CmdBuffer
     //!           reference to Cmd buffer control struct
     //! \param    [out] GenericPrologParams
-    //!           Generic prolog params struct to be set
-    //! \param    [out] GpuStatusBuffer
     //!           GpuStatusBuffer resource to be set
     //! \param    [out] iRemaining
     //!           integer showing initial cmd buffer usage
@@ -776,7 +808,6 @@ protected:
    virtual MOS_STATUS PrepareVeboxCmd(
       MOS_COMMAND_BUFFER*                      CmdBuffer,
       RENDERHAL_GENERIC_PROLOG_PARAMS&         GenericPrologParams,
-      MOS_RESOURCE&                            GpuStatusBuffer,
       int32_t&                                 iRemaining);
 
     //!
@@ -871,6 +902,15 @@ protected:
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS AddVeboxIECPState();
+
+    //!
+    //! \brief    Add vebox Gamut state
+    //! \details  Add vebox Gamut state
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS AddVeboxGamutState(){return MOS_STATUS_SUCCESS;}
+
     //!
     //! \brief    Vebox set up vebox state heap
     //! \details  Setup Vebox indirect states: DNDI and etc
@@ -901,9 +941,11 @@ protected:
     //! \return   VP_SURFACE*
     //!           Pointer to surface of specified type
     //!
-    virtual VP_SURFACE *GetSurface(SurfaceType type);
+    virtual VP_SURFACE* GetSurface(SurfaceType type);
 
     virtual MOS_STATUS InitSurfMemCacheControl(VP_EXECUTE_CAPS packetCaps);
+
+    virtual MHW_CSPACE VpHalCspace2MhwCspace(VPHAL_CSPACE cspace);
 
 private:
 
@@ -922,6 +964,7 @@ private:
     //! \return   bool  success if succeeded, otherwise failure
     //!
     virtual MOS_STATUS SetSfcMmcParams();
+    MOS_STATUS InitSfcRender();
 
 protected:
 
@@ -934,7 +977,6 @@ protected:
     float                       m_fCscInOffset[3];                                 //!< [3x1] Input Offset matrix for CSC
     float                       m_fCscOutOffset[3];                                //!< [3x1] Output Offset matrix for CSC
     SfcRenderBase               *m_sfcRender             = nullptr;
-    VPHAL_SFC_RENDER_DATA       m_sfcRenderData          = {};
     bool                        m_IsSfcUsed              = false;
     std::map<SurfaceType, VP_SURFACE*> m_surfacesGroup;
 
@@ -954,6 +996,10 @@ protected:
     uint32_t                    m_dwVeboxPerBlockStatisticsWidth = 0;             //!< Per block statistics width
     uint32_t                    m_dwVeboxPerBlockStatisticsHeight = 0;            //!< Per block statistics height
 
+    // STE factor LUT
+    static const uint32_t       m_satP1Table[MHW_STE_FACTOR_MAX + 1];
+    static const uint32_t       m_satS0Table[MHW_STE_FACTOR_MAX + 1];
+    static const uint32_t       m_satS1Table[MHW_STE_FACTOR_MAX + 1];
 };
 
 }

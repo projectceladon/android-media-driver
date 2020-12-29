@@ -101,67 +101,22 @@ enum SwFilterPipeType
     NumOfSwFilterPipeType
 };
 
-class SwFilterFeatureHandler
-{
-public:
-    SwFilterFeatureHandler(VpInterface &vpInterface, FeatureType type);
-    virtual ~SwFilterFeatureHandler();
-    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-    virtual MOS_STATUS CreateSwFilter(SwFilter *&swFilter, VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-protected:
-    VpInterface     &m_vpInterface;
-    FeatureType     m_type;
-};
-
-class SwFilterCscHandler : public SwFilterFeatureHandler
-{
-public:
-    SwFilterCscHandler(VpInterface &vpInterface);
-    virtual ~SwFilterCscHandler();
-    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-};
-
-class SwFilterRotMirHandler : public SwFilterFeatureHandler
-{
-public:
-    SwFilterRotMirHandler(VpInterface &vpInterface);
-    virtual ~SwFilterRotMirHandler();
-    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-};
-
-class SwFilterScalingHandler : public SwFilterFeatureHandler
-{
-public:
-    SwFilterScalingHandler(VpInterface &vpInterface);
-    virtual ~SwFilterScalingHandler();
-    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-};
-
-class SwFilterDnHandler : public SwFilterFeatureHandler
-{
-public:
-    SwFilterDnHandler(VpInterface &vpInterface);
-    virtual ~SwFilterDnHandler();
-    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
-};
-
 class SwFilterPipe
 {
 public:
     SwFilterPipe(VpInterface &vpInterface);
     virtual ~SwFilterPipe();
     MOS_STATUS Initialize(VP_PIPELINE_PARAMS &params, FeatureRule &featureRule);
+    MOS_STATUS Initialize(VEBOX_SFC_PARAMS &params);
     void UpdateSwFilterPipeType();
     MOS_STATUS Clean();
 
     bool IsEmpty();
     bool IsPrimaryEmpty();
 
-    MOS_STATUS RegisterFeatures();
-    MOS_STATUS UnregisterFeatures();
-
     MOS_STATUS ConfigFeaturesToPipe(VP_PIPELINE_PARAMS &params, FeatureRule &featureRule, bool isInputPipe);
     MOS_STATUS ConfigFeatures(VP_PIPELINE_PARAMS &params, FeatureRule &featureRule);
+    MOS_STATUS ConfigFeatures(VEBOX_SFC_PARAMS &params);
     MOS_STATUS UpdateFeatures(bool isInputPipe, uint32_t pipeIndex);
 
     SwFilterPipeType GetSwFilterPipeType()
@@ -188,6 +143,23 @@ public:
         return m_surfacesGroup;
     }
 
+    MOS_STATUS SetSecureProcessFlag(bool secureProcessed)
+    {
+        m_processedSecurePrepared = secureProcessed;
+        return MOS_STATUS_SUCCESS;
+    }
+
+    bool GetSecureProcessFlag()
+    {
+        return m_processedSecurePrepared;
+    }
+
+    MOS_STATUS ResetSecureFlag()
+    {
+        m_processedSecurePrepared = false;
+        return MOS_STATUS_SUCCESS;
+    }
+
 protected:
     MOS_STATUS CleanFeaturesFromPipe(bool isInputPipe, uint32_t index);
     MOS_STATUS CleanFeaturesFromPipe(bool isInputPipe);
@@ -206,10 +178,10 @@ protected:
     std::map<SurfaceType, VP_SURFACE*>  m_surfacesGroup;
 
     VpInterface                         &m_vpInterface;
-    std::map<FeatureType, SwFilterFeatureHandler*> m_featureHandler;
 
     bool                                m_isFeatureRegistered = false;
     SwFilterPipeType                    m_swFilterPipeType = SwFilterPipeTypeInvalid;
+    bool                                m_processedSecurePrepared = false;
 };
 
 

@@ -184,7 +184,7 @@ MOS_STATUS CodechalDecodeAvcG12::SetFrameStates()
 
 #ifdef _MMC_SUPPORTED
     // To WA invalid aux data caused HW issue when MMC on
-    if (m_mmc && m_mmc->IsMmcEnabled() && MEDIA_IS_WA(m_waTable, Wa_1408785368) &&
+    if (m_mmc && m_mmc->IsMmcEnabled() && (MEDIA_IS_WA(m_waTable, Wa_1408785368) || MEDIA_IS_WA(m_waTable, Wa_22010493002)) &&
         m_decodeParams.m_destSurface && !Mos_ResourceIsNull(&m_decodeParams.m_destSurface->OsResource) &&
         m_decodeParams.m_destSurface->OsResource.bConvertedFromDDIResource)
     {
@@ -195,8 +195,8 @@ MOS_STATUS CodechalDecodeAvcG12::SetFrameStates()
         else
         {
             CODECHAL_DECODE_VERBOSEMESSAGE("Clear CCS by VE resolve before frame %d submission", m_frameNum);
-            CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnDecompResource(m_osInterface, &m_decodeParams.m_destSurface->OsResource));
-            CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnSetGpuContext(m_osInterface, m_videoContext));
+            CODECHAL_DECODE_CHK_STATUS_RETURN(static_cast<CodecHalMmcStateG12 *>(m_mmc)->ClearAuxSurf(
+                this, m_miInterface, &m_decodeParams.m_destSurface->OsResource, m_veState));
         }
     }
 #endif
@@ -412,6 +412,17 @@ MOS_STATUS CodechalDecodeAvcG12::DecodePrimitiveLevel()
     auto decProcessingParams = (CODECHAL_DECODE_PROCESSING_PARAMS *)m_decodeParams.m_procParams;
     if (decProcessingParams != nullptr && !m_sfcState->m_sfcPipeOut && (m_isSecondField || m_avcPicParams->seq_fields.mb_adaptive_frame_field_flag))
     {
+#ifdef _MMC_SUPPORTED
+        // To Clear invalid aux data of output surface when MMC on
+        if (m_mmc && m_mmc->IsMmcEnabled() &&
+            !Mos_ResourceIsNull(&decProcessingParams->pOutputSurface->OsResource) &&
+            decProcessingParams->pOutputSurface->OsResource.bConvertedFromDDIResource)
+        {
+            CODECHAL_DECODE_VERBOSEMESSAGE("Clear invalid aux data of output surface before frame %d submission", m_frameNum);
+            CODECHAL_DECODE_CHK_STATUS_RETURN(static_cast<CodecHalMmcStateG12 *>(m_mmc)->ClearAuxSurf(
+                this, m_miInterface, &decProcessingParams->pOutputSurface->OsResource, m_veState));
+        }
+#endif
         CODECHAL_DECODE_CHK_STATUS_RETURN(m_fieldScalingInterface->DoFieldScaling(
             decProcessingParams,
             m_renderContext,

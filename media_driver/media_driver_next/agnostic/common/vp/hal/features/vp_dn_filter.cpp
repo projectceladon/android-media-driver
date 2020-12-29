@@ -103,7 +103,7 @@ MOS_STATUS VpDnFilter::CalculateEngineParams()
         m_veboxDnParams->NoiseLevel         = m_dnParams.denoiseParams.NoiseLevel;
         m_veboxDnParams->bEnableHVSDenoise  = m_dnParams.denoiseParams.bEnableHVSDenoise;
         m_veboxDnParams->HVSDenoise         = m_dnParams.denoiseParams.HVSDenoise;
-        m_veboxDnParams->bProgressive       = SAMPLE_PROGRESSIVE == m_dnParams.inputSampleType;
+        m_veboxDnParams->bProgressive       = SAMPLE_PROGRESSIVE == m_dnParams.sampleTypeInput;
     }
     else
     {
@@ -140,7 +140,7 @@ HwFilterDnParameter::~HwFilterDnParameter()
 
 MOS_STATUS HwFilterDnParameter::ConfigParams(HwFilter &hwFilter)
 {
-    return hwFilter.ConfigDnParam(m_Params);
+    return hwFilter.ConfigParam(m_Params);
 }
 
 MOS_STATUS HwFilterDnParameter::Initialize(HW_FILTER_DN_PARAM &param)
@@ -243,6 +243,7 @@ HwFilterParameter* PolicyVeboxDnHandler::CreateHwFilterParam(VP_EXECUTE_CAPS vpE
         paramDn.vpExecuteCaps = vpExecuteCaps;
         paramDn.pPacketParamFactory = &m_PacketParamFactory;
         paramDn.dnParams = param;
+        paramDn.pfnCreatePacketParam = PolicyVeboxDnHandler::CreatePacketParam;
 
         HwFilterParameter *pHwFilterParam = GetHwFeatureParameterFromPool();
 

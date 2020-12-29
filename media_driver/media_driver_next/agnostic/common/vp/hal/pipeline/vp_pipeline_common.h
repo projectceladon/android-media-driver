@@ -63,6 +63,8 @@ struct VP_SURFACE
     RECT                        rcDst;              //!< Destination rectangle
     RECT                        rcMaxSrc;           //!< Max source rectangle
     bool                        bVEBOXCroppingUsed; //!<Vebox crop case need use rcSrc as vebox input.
+    uint32_t                    bufferWidth;        //!< 1D buffer Width, n/a if 2D surface
+    uint32_t                    bufferHeight;       //!< 1D buffer Height, n/a if 2D surface
     // Return true if no resource assigned to current vp surface.
     bool        IsEmpty();
     // Clean the vp surface to empty state. Only valid for false == isResourceOwner case.
@@ -107,12 +109,18 @@ struct _VP_EXECUTE_CAPS
             uint32_t bDN            : 1;   // Vebox DN needed;
             uint32_t bDI            : 1;   // Vebox DNDI enabled
             uint32_t bIECP          : 1;   // Vebox IECP needed;
+            uint32_t bSTE           : 1;   // Vebox STE needed;
+            uint32_t bACE           : 1;   // Vebox ACE needed;
+            uint32_t bTCC           : 1;   // Vebox TCC needed;
+            uint32_t bCGC           : 1;   // Vebox CGC needed
+            uint32_t bProcamp       : 1;   // Vebox Procamp needed;
             uint32_t bBeCSC         : 1;   // Vebox back end CSC needed;
             uint32_t bLACE          : 1;   // Vebox LACE Needed;
             uint32_t bQueryVariance : 1;
             uint32_t bRefValid      : 1;   // Vebox Ref is Valid
             uint32_t bSTD           : 1;   // Vebox LACE STD Needed;
             uint32_t bDnKernelUpdate: 1;
+            uint32_t bVeboxSecureCopy : 1;
 
             // SFC features
             uint32_t bSfcCsc        : 1;   // Sfc Csc enabled
@@ -124,7 +132,7 @@ struct _VP_EXECUTE_CAPS
             uint32_t bComposite : 1;
             uint32_t bBobDI     : 1;
             uint32_t bIScaling  : 1;
-            uint32_t reserved   : 13;  // Reserved
+            uint32_t reserved   : 7;  // Reserved
         };
     };
 };
@@ -141,6 +149,7 @@ typedef struct _VP_EngineEntry
             uint32_t RenderNeeded : 2;
             uint32_t VeboxARGBOut : 1;
             uint32_t VeboxARGB10bitOutput : 1;
+            uint32_t VeboxIECPNeeded : 1;
             uint32_t DisableVeboxSFCMode : 1;
             uint32_t FurtherProcessNeeded : 1;
             uint32_t CompositionNeeded : 1;
@@ -168,5 +177,11 @@ using PVP_MHWINTERFACE = VP_MHWINTERFACE * ;
 using VP_EXECUTE_CAPS  = _VP_EXECUTE_CAPS;
 using VP_PACKET_ENGINE = _VP_PACKET_ENGINE;
 using PVP_SURFACE      = VP_SURFACE*;
+
+inline bool IsVeboxFeatureInuse(VP_EXECUTE_CAPS &caps)
+{
+    return (caps.bVebox && (!caps.bSFC || caps.bDN || caps.bDI || caps.bIECP || caps.bSTE ||
+            caps.bACE || caps.bTCC || caps.bBeCSC || caps.bQueryVariance || caps.bLACE || caps.bSTD));
+}
 
 #endif

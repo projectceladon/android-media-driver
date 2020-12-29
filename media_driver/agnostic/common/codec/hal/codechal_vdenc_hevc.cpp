@@ -1845,25 +1845,17 @@ MOS_STATUS CodechalVdencHevcState::ReadSliceSize(PMOS_COMMAND_BUFFER cmdBuffer)
 
     CODECHAL_ENCODE_FUNCTION_ENTER;
 
+    // Report slice size to app only when dynamic slice is enabled
+    if (!m_hevcSeqParams->SliceSizeControl)
+    {
+        return eStatus;
+    }
+
     MOS_LOCK_PARAMS lockFlags;
     MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
     lockFlags.WriteOnly = true;
 
     uint32_t baseOffset = (m_encodeStatusBuf.wCurrIndex * m_encodeStatusBuf.dwReportSize + sizeof(uint32_t) * 2);  // encodeStatus is offset by 2 DWs in the resource
-
-    // Report slice size to app only when dynamic slice is enabled
-    if (!m_hevcSeqParams->SliceSizeControl)
-    {
-        // Clear slice size report in EncodeStatus buffer
-        uint8_t* data = (uint8_t*)m_osInterface->pfnLockResource(m_osInterface, &m_encodeStatusBuf.resStatusBuffer, &lockFlags);
-        CODECHAL_ENCODE_CHK_NULL_RETURN(data);
-        EncodeStatus* dataStatus = (EncodeStatus*)(data + baseOffset);
-        MOS_ZeroMemory(&(dataStatus->sliceReport), sizeof(EncodeStatusSliceReport));
-        m_osInterface->pfnUnlockResource(m_osInterface, &m_encodeStatusBuf.resStatusBuffer);
-
-        return eStatus;
-    }
-
     uint32_t sizeOfSliceSizesBuffer = MOS_ALIGN_CEIL(CODECHAL_HEVC_MAX_NUM_SLICES_LVL_6 * CODECHAL_CACHELINE_SIZE, CODECHAL_PAGE_SIZE);
 
     if (IsFirstPass())
@@ -1892,11 +1884,16 @@ MOS_STATUS CodechalVdencHevcState::ReadSliceSize(PMOS_COMMAND_BUFFER cmdBuffer)
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resSliceReport[m_encodeStatusBuf.wCurrIndex]);
 
         // Set slice size pointer in slice size structure
-        data = (uint8_t*)m_osInterface->pfnLockResource(m_osInterface,(&m_encodeStatusBuf.resStatusBuffer), &lockFlags);
-        CODECHAL_ENCODE_CHK_NULL_RETURN(data);
-        EncodeStatus* dataStatus = (EncodeStatus*)(data + baseOffset);
-        (dataStatus)->sliceReport.pSliceSize             = &m_resSliceReport[m_encodeStatusBuf.wCurrIndex];
-        m_osInterface->pfnUnlockResource(m_osInterface, &m_encodeStatusBuf.resStatusBuffer);
+        MHW_MI_FLUSH_DW_PARAMS  miFlushDwParams;
+        MOS_ZeroMemory(&miFlushDwParams, sizeof(miFlushDwParams));
+        miFlushDwParams.pOsResource      = &m_encodeStatusBuf.resStatusBuffer;
+        miFlushDwParams.dwResourceOffset = CODECHAL_OFFSETOF(EncodeStatusSliceReport, pSliceSize) + baseOffset + m_encodeStatusBuf.dwSliceReportOffset;
+        miFlushDwParams.dwDataDW1        = (uint32_t)((uint64_t)&m_resSliceReport[m_encodeStatusBuf.wCurrIndex] & 0xFFFFFFFF);
+        miFlushDwParams.dwDataDW2        = (uint32_t)(((uint64_t)&m_resSliceReport[m_encodeStatusBuf.wCurrIndex] & 0xFFFFFFFF00000000) >> 32);
+        miFlushDwParams.bQWordEnable     = 1;
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiFlushDwCmd(
+            cmdBuffer,
+            &miFlushDwParams));
     }
 
     // Copy Slize size data buffer from PAK to be sent back to App
@@ -2173,21 +2170,22 @@ MOS_STATUS CodechalVdencHevcState::ExecutePictureLevel()
         // of the BB and keep the current frame's tag at the end of the BB. There will be a delay for tag update but it should be fine
         // as long as Dec/VP/Enc won't depend on this PAK so soon.
 
-        MOS_RESOURCE globalGpuContextSyncTagBuffer;
+        PMOS_RESOURCE globalGpuContextSyncTagBuffer = nullptr;
 
         CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnGetGpuStatusBufferResource(
             m_osInterface,
-            &globalGpuContextSyncTagBuffer));
+            globalGpuContextSyncTagBuffer));
+        CODECHAL_ENCODE_CHK_NULL_RETURN(globalGpuContextSyncTagBuffer);
 
         MHW_MI_STORE_DATA_PARAMS params;
-        params.pOsResource = &globalGpuContextSyncTagBuffer;
+        params.pOsResource = globalGpuContextSyncTagBuffer;
         params.dwResourceOffset = m_osInterface->pfnGetGpuStatusTagOffset(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         uint32_t value = m_osInterface->pfnGetGpuStatusTag(m_osInterface, m_osInterface->CurrentGpuContextOrdinal);
         params.dwValue = (value > 0) ? (value - 1) : 0;
         CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreDataImmCmd(&cmdBuffer, &params));
     }
 
-    if (!m_lookaheadUpdate)
+    if (!m_lookaheadPass || m_swLaMode)
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(StartStatusReport(&cmdBuffer, CODECHAL_NUM_MEDIA_STATES));
     }
@@ -2476,7 +2474,7 @@ MOS_STATUS CodechalVdencHevcState::ExecuteSliceLevel()
     }
 #endif
 
-    if (!m_lookaheadUpdate)
+    if (!m_lookaheadPass || m_swLaMode)
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(EndStatusReport(&cmdBuffer, CODECHAL_NUM_MEDIA_STATES));
     }
@@ -2655,28 +2653,36 @@ MOS_STATUS CodechalVdencHevcState::SetSequenceStructs()
     m_lookaheadDepth = m_hevcSeqParams->LookaheadDepth;
     m_lookaheadPass  = (m_lookaheadDepth > 0) && (m_hevcSeqParams->RateControlMethod == RATECONTROL_CQP);
 
-    if (m_lookaheadPass)
+
+    if (m_lookaheadDepth > 0)
     {
-        double frameRate = 0;
-        if (m_hevcSeqParams->FrameRate.Denominator != 0)
-        {
-            frameRate = (double)m_hevcSeqParams->FrameRate.Numerator / m_hevcSeqParams->FrameRate.Denominator;
-        }
         uint64_t targetBitRate = (uint64_t)m_hevcSeqParams->TargetBitRate * CODECHAL_ENCODE_BRC_KBPS;
+        double frameRate     = (m_hevcSeqParams->FrameRate.Denominator ? (double)m_hevcSeqParams->FrameRate.Numerator / m_hevcSeqParams->FrameRate.Denominator : 30);
         if ((frameRate < 1) || (targetBitRate < frameRate) || (targetBitRate > 0xFFFFFFFF))
         {
-            CODECHAL_ENCODE_ASSERTMESSAGE("Invalid FrameRate or TargetBitRate in lookahead pass!");
+            CODECHAL_ENCODE_ASSERTMESSAGE("Invalid FrameRate or TargetBitRate in LPLA!");
             return MOS_STATUS_INVALID_PARAMETER;
         }
+
         m_averageFrameSize = (uint32_t)(targetBitRate / frameRate);
+
+        if (m_hevcSeqParams->VBVBufferSizeInBit < m_hevcSeqParams->InitVBVBufferFullnessInBit)
+        {
+            CODECHAL_ENCODE_ASSERTMESSAGE("VBVBufferSizeInBit is less than InitVBVBufferFullnessInBit\n");
+            eStatus = MOS_STATUS_INVALID_PARAMETER;
+            return eStatus;
+        }
 
         if (m_targetBufferFulness == 0)
         {
             m_targetBufferFulness = m_hevcSeqParams->VBVBufferSizeInBit - m_hevcSeqParams->InitVBVBufferFullnessInBit;
-            uint32_t initVbvFullnessInFrames = MOS_MIN(m_hevcSeqParams->InitVBVBufferFullnessInBit, m_hevcSeqParams->VBVBufferSizeInBit) / m_averageFrameSize;
-            uint32_t vbvBufferSizeInFrames = m_hevcSeqParams->VBVBufferSizeInBit / m_averageFrameSize;
-            uint32_t encBufferFullness = (vbvBufferSizeInFrames - initVbvFullnessInFrames) * m_averageFrameSize;
-            m_bufferFulnessError = (int32_t)((int64_t)m_targetBufferFulness - (int64_t)encBufferFullness);
+            if (m_lookaheadPass)
+            {
+                uint32_t initVbvFullnessInFrames = MOS_MIN(m_hevcSeqParams->InitVBVBufferFullnessInBit, m_hevcSeqParams->VBVBufferSizeInBit) / m_averageFrameSize;
+                uint32_t vbvBufferSizeInFrames = m_hevcSeqParams->VBVBufferSizeInBit / m_averageFrameSize;
+                uint32_t encBufferFullness = (vbvBufferSizeInFrames - initVbvFullnessInFrames) * m_averageFrameSize;
+                m_bufferFulnessError = (int32_t)((int64_t)m_targetBufferFulness - (int64_t)encBufferFullness);
+            }
         }
     }
 
@@ -2777,9 +2783,16 @@ MOS_STATUS CodechalVdencHevcState::SetPictureStructs()
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(PrepareVDEncStreamInData());
 
-    if (m_encodeParams.bLaDataEnabled == false)
+    if (!m_lookaheadPass)
     {
-        m_encodeParams.psLaDataBuffer = &m_vdencLaDataBuffer;
+        if ((m_lookaheadDepth > 0) && (m_prevTargetFrameSize > 0))
+        {
+            int64_t targetBufferFulness = (int64_t)m_targetBufferFulness;
+            targetBufferFulness += (int64_t)(m_prevTargetFrameSize << 3) - (int64_t)m_averageFrameSize;
+            m_targetBufferFulness = targetBufferFulness < 0 ? 0 : (targetBufferFulness > 0xFFFFFFFF ? 0xFFFFFFFF : (uint32_t)targetBufferFulness);
+        }
+
+        m_prevTargetFrameSize = m_hevcPicParams->TargetFrameSize;
     }
 
     return eStatus;
@@ -2922,8 +2935,8 @@ MOS_STATUS CodechalVdencHevcState::UserFeatureKeyReport()
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalEncodeHevcBase::UserFeatureKeyReport());
 
 #if (_DEBUG || _RELEASE_INTERNAL)
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_VDENC_IN_USE_ID, m_vdencEnabled);
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_ACQP_ENABLE_ID, m_hevcVdencAcqpEnabled);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_VDENC_IN_USE_ID, m_vdencEnabled, m_osInterface->pOsContext);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_ACQP_ENABLE_ID, m_hevcVdencAcqpEnabled, m_osInterface->pOsContext);
 #endif
 
     return eStatus;
@@ -2939,23 +2952,6 @@ MOS_STATUS CodechalVdencHevcState::GetStatusReport(
 
     // common initilization
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalEncodeHevcBase::GetStatusReport(encodeStatus, encodeStatusReport));
-
-    if (m_vdencHucUsed)
-    {
-        // Num of VDEn BRC pass is stored at PakMmio DW0
-        MOS_LOCK_PARAMS lockFlags;
-        MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
-        lockFlags.WriteOnly = true;
-
-        MOS_RESOURCE *pakInfoBuffer = (MOS_RESOURCE*)m_allocator->GetResource(m_standard, pakInfo);
-        uint8_t* data = (uint8_t*)m_osInterface->pfnLockResource(m_osInterface, pakInfoBuffer, &lockFlags);
-        CODECHAL_ENCODE_CHK_NULL_RETURN(data);
-        uint32_t* insertion = (uint32_t*)(data + sizeof(uint32_t));
-        *insertion = encodeStatus->ImageStatusCtrl.hcpTotalPass << 24;
-        m_osInterface->pfnUnlockResource(m_osInterface, pakInfoBuffer);
-        pakInfoBuffer = nullptr;
-    }
-
 
     MOS_LOCK_PARAMS lockFlags;
     MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
@@ -2988,8 +2984,7 @@ MOS_STATUS CodechalVdencHevcState::GetStatusReport(
         m_osInterface->pfnUnlockResource(m_osInterface, encodeStatus->sliceReport.pSliceSize);
     }
 
-    encodeStatusReport->cqmHint = 0xFF;
-    if (m_lookaheadPass && m_lookaheadUpdate && (encodeStatus->lookaheadStatus.targetFrameSize > 0))
+    if (m_lookaheadPass && m_lookaheadReport && (encodeStatus->lookaheadStatus.targetFrameSize > 0))
     {
         encodeStatusReport->pLookaheadStatus = &encodeStatus->lookaheadStatus;
         encodeStatus->lookaheadStatus.isValid = 1;
@@ -2998,34 +2993,30 @@ MOS_STATUS CodechalVdencHevcState::GetStatusReport(
         uint64_t targetBufferFulness = (uint64_t)encodeStatus->lookaheadStatus.targetBufferFulness * m_averageFrameSize;
         encodeStatus->lookaheadStatus.targetBufferFulness = (uint32_t)((targetBufferFulness + 32) / 64); // 64 is normalized average frame size used in lookahead analysis kernel
         // Apply rounding error to targetFrameSize to align target buffer fullness between lookahead pass and encode pass
-        if (encodeStatus->lookaheadStatus.targetFrameSize > 0)
+        if (m_prevTargetFrameSize > 0)
         {
-            if (m_prevTargetFrameSize > 0)
+            int64_t encTargetBufferFulness = (int64_t)m_targetBufferFulness;
+            encTargetBufferFulness += (int64_t)(m_prevTargetFrameSize << 3) - (int64_t)m_averageFrameSize;
+            m_targetBufferFulness = encTargetBufferFulness < 0 ?
+                0 : (encTargetBufferFulness > 0xFFFFFFFF ? 0xFFFFFFFF : (uint32_t)encTargetBufferFulness);
+            int32_t deltaBits = (int32_t)((int64_t)(encodeStatus->lookaheadStatus.targetBufferFulness) + m_bufferFulnessError - (int64_t)(m_targetBufferFulness));
+            if (deltaBits > 8)
             {
-                int64_t encTargetBufferFulness = (int64_t)m_targetBufferFulness;
-                encTargetBufferFulness += (int64_t)(m_prevTargetFrameSize << 3) - (int64_t)m_averageFrameSize;
-                m_targetBufferFulness = encTargetBufferFulness < 0 ?
-                    0 : (encTargetBufferFulness > 0xFFFFFFFF ? 0xFFFFFFFF : (uint32_t)encTargetBufferFulness);
-                int32_t deltaBits = (int32_t)((int64_t)(encodeStatus->lookaheadStatus.targetBufferFulness) + m_bufferFulnessError - (int64_t)(m_targetBufferFulness));
-                if (deltaBits > 8)
-                {
-                    encodeStatus->lookaheadStatus.targetFrameSize += (uint32_t)(deltaBits >> 3);
-                }
-                else if (deltaBits < -8)
-                {
-                    encodeStatus->lookaheadStatus.targetFrameSize -= (uint32_t)((-deltaBits) >> 3);
-                }
+                encodeStatus->lookaheadStatus.targetFrameSize += (uint32_t)(deltaBits >> 3);
             }
-            m_prevTargetFrameSize = encodeStatus->lookaheadStatus.targetFrameSize;
+            else if (deltaBits < -8)
+            {
+                encodeStatus->lookaheadStatus.targetFrameSize -= (uint32_t)((-deltaBits) >> 3);
+            }
         }
+        m_prevTargetFrameSize = encodeStatus->lookaheadStatus.targetFrameSize;
 
-        encodeStatusReport->cqmHint = encodeStatus->lookaheadStatus.cqmHint;
-        if (encodeStatus->lookaheadStatus.cqmHint > 1)
+        if (encodeStatus->lookaheadStatus.cqmHint > 4)
         {
             // Currently only 0x00 and 0x01 are valid. Report invalid (0xFF) for other values.
-            encodeStatusReport->cqmHint = 0xFF;
             encodeStatus->lookaheadStatus.cqmHint = 0xFF;
         }
+        encodeStatus->lookaheadStatus.miniGopSize = encodeStatus->lookaheadStatus.pyramidDeltaQP == 0 ? 1 : 4;
     }
     else
     {
@@ -3106,6 +3097,12 @@ MOS_STATUS CodechalVdencHevcState::FreePakResources()
         {
             m_osInterface->pfnFreeResource(m_osInterface, &m_resSliceReport[i]);
         }
+    }
+
+    if (m_swLaMode != nullptr)
+    {
+        m_osInterface->pfnFreeLibrary(m_swLaMode);
+        m_swLaMode = nullptr;
     }
 
     return CodechalEncodeHevcBase::FreePakResources();
@@ -3502,14 +3499,16 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_SINGLE_TASK_PHASE_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_singleTaskPhaseSupported = (userFeatureData.i32Data) ? true : false;
 
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_RDOQ_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_hevcRdoqEnabled = userFeatureData.i32Data ? true : false;
 
     // Multi-Pass BRC
@@ -3517,7 +3516,8 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_MULTIPASS_BRC_ENABLE_ID,
-        &userFeatureData);
+        &userFeatureData,
+        m_osInterface->pOsContext);
     m_multipassBrcSupported = (userFeatureData.i32Data) ? true : false;
 
     if (m_codecFunction != CODECHAL_FUNCTION_PAK)
@@ -3528,7 +3528,8 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_ME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_hmeSupported = (userFeatureData.i32Data) ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -3537,7 +3538,8 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_16xME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_16xMeSupported = (userFeatureData.i32Data) ? true : false;
     }
 
@@ -3547,28 +3549,32 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_ACQP_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_hevcVdencAcqpEnabled = userFeatureData.i32Data ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_VQI_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_hevcVisualQualityImprovement = userFeatureData.i32Data ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_ROUNDING_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_hevcVdencRoundingEnabled = userFeatureData.i32Data ? true : false;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_PAKOBJCMD_STREAMOUT_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_vdencPakObjCmdStreamOutEnabled = userFeatureData.i32Data ? true : false;
 
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -3576,7 +3582,8 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_ENCODE_CQM_QP_THRESHOLD_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_cqmQpThreshold = (uint8_t)userFeatureData.u32Data;
 #endif
     }
@@ -3608,7 +3615,8 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_16xME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_16xMeSupported = (userFeatureData.i32Data) ? true : false;
     }
 
@@ -3618,9 +3626,40 @@ MOS_STATUS CodechalVdencHevcState::Initialize(CodechalSetting * settings)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_HEVC_VDENC_32xME_ENABLE_ID,
-            &userFeatureData);
+            &userFeatureData,
+            m_osInterface->pOsContext);
         m_32xMeSupported = (userFeatureData.i32Data) ? true : false;
     }
+
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_ID,
+        &userFeatureData,
+        m_osInterface->pOsContext);
+
+    if (userFeatureData.i32Data)
+    {
+        MOS_STATUS statusKey = MOS_STATUS_SUCCESS;
+        char path_buffer[256];
+        MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+        MOS_ZeroMemory(path_buffer, 256);
+        userFeatureData.StringData.pStringData = path_buffer;
+
+        statusKey = MOS_UserFeature_ReadValue_ID(
+            nullptr,
+            __MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_PATH_ID,
+            &userFeatureData,
+            m_osInterface->pOsContext);
+
+        if (statusKey == MOS_STATUS_SUCCESS && userFeatureData.StringData.uSize > 0)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnLoadLibrary(m_osInterface, path_buffer, &m_swLaMode));
+        }
+    }
+
+    // SW LA DLL Reporting
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_ENCODE_LA_SOFTWARE_IN_USE_ID, (m_swLaMode == nullptr) ? false : true, m_osInterface->pOsContext);
 
     return eStatus;
 }

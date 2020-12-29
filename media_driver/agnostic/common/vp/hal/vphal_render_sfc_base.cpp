@@ -120,6 +120,30 @@ MHW_ROTATION VpHal_GetMhwRotationParam(VPHAL_ROTATION Rotation)
     }
 }
 
+//!
+//! \brief    Get SFC Scaling mode parameter
+//! \details  Get MHW SFC Scaling mode parameter
+//! \param    [in] Scaling mode
+//!           VPHAL Scaling mode parameter
+//! \return   MHW_SCALING_MODE
+//!
+MHW_SCALING_MODE VpHal_GetMhwScalingModeParam(VPHAL_SCALING_MODE ScalingMode)
+{
+    switch (ScalingMode)
+    {
+    case VPHAL_SCALING_NEAREST:
+        return MHW_SCALING_NEAREST;                         // Nearest interpolation
+
+    case VPHAL_SCALING_BILINEAR:
+        return MHW_SCALING_BILINEAR;                        // Bilinear interpolation
+
+    case VPHAL_SCALING_AVS:
+    case VPHAL_SCALING_ADV_QUALITY:
+    default:
+        return MHW_SCALING_AVS;
+    }
+}
+
 bool VphalSfcState::IsFormatMMCSupported(
     MOS_FORMAT                  Format)
 {
@@ -1234,16 +1258,16 @@ MOS_STATUS VphalSfcState::SetSfcStateParams(
             }
             break;
 
-            case VPHAL_ALPHA_FILL_MODE_BACKGROUND:
-                pSfcStateParams->fAlphaPixel = m_renderData.bColorFill ?
-                    pSfcStateParams->fColorFillAPixel : 1.0F;
-                break;
+        case VPHAL_ALPHA_FILL_MODE_BACKGROUND:
+            pSfcStateParams->fAlphaPixel = m_renderData.bColorFill ?
+                pSfcStateParams->fColorFillAPixel : 1.0F;
+            break;
 
-            case VPHAL_ALPHA_FILL_MODE_SOURCE_STREAM:
-            case VPHAL_ALPHA_FILL_MODE_OPAQUE:
-            default:
-                pSfcStateParams->fAlphaPixel      = 1.0F;
-                pSfcStateParams->fColorFillAPixel = 1.0F;
+        case VPHAL_ALPHA_FILL_MODE_SOURCE_STREAM:
+        case VPHAL_ALPHA_FILL_MODE_OPAQUE:
+        default:
+            pSfcStateParams->fAlphaPixel      = 1.0F;
+            pSfcStateParams->fColorFillAPixel = 1.0F;
         }
     }
     else
@@ -1358,43 +1382,64 @@ MOS_STATUS VphalSfcState::SetSfcMmcStatus(
 MOS_STATUS VphalSfcState::SetAvsStateParams()
 {
     MOS_STATUS                  eStatus = MOS_STATUS_SUCCESS;
-    PMHW_SFC_AVS_STATE          pMhwAvsState;
+    PMHW_SFC_AVS_STATE          pMhwAvsState = nullptr;
+
+    MHW_SCALING_MODE            scalingMode  = MHW_SCALING_AVS;
+    bool                        bUse8x8Filter = false;
 
     VPHAL_RENDER_CHK_NULL(m_sfcInterface);
 
     pMhwAvsState    = &m_avsState.AvsStateParams;
+    MOS_ZeroMemory(pMhwAvsState, sizeof(MHW_SFC_AVS_STATE));
 
-    pMhwAvsState->dwInputHorizontalSiting = (m_renderData.SfcSrcChromaSiting  & MHW_CHROMA_SITING_HORZ_CENTER) ? SFC_AVS_INPUT_SITING_COEF_4_OVER_8 :
-                                            ((m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_HORZ_RIGHT)  ? SFC_AVS_INPUT_SITING_COEF_8_OVER_8 :
-                                            SFC_AVS_INPUT_SITING_COEF_0_OVER_8);
-
-    pMhwAvsState->dwInputVerticalSitting  = (m_renderData.SfcSrcChromaSiting  & MHW_CHROMA_SITING_VERT_CENTER) ? SFC_AVS_INPUT_SITING_COEF_4_OVER_8 :
-                                            ((m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_VERT_BOTTOM) ? SFC_AVS_INPUT_SITING_COEF_8_OVER_8 :
-                                            SFC_AVS_INPUT_SITING_COEF_0_OVER_8);
-
-    if (m_renderData.SfcSrcChromaSiting == MHW_CHROMA_SITING_NONE)
+    if (m_renderData.bScaling ||
+        m_renderData.bForcePolyPhaseCoefs)
     {
-        m_renderData.SfcSrcChromaSiting = MHW_CHROMA_SITING_HORZ_LEFT | MHW_CHROMA_SITING_VERT_TOP;
+        pMhwAvsState->dwInputHorizontalSiting = (m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_HORZ_CENTER) ? SFC_AVS_INPUT_SITING_COEF_4_OVER_8 : ((m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_HORZ_RIGHT) ? SFC_AVS_INPUT_SITING_COEF_8_OVER_8 : SFC_AVS_INPUT_SITING_COEF_0_OVER_8);
 
-        if (VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat) == VPHAL_COLORPACK_420)  // For 420, default is Left & Center, else default is Left & Top
+        pMhwAvsState->dwInputVerticalSitting = (m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_VERT_CENTER) ? SFC_AVS_INPUT_SITING_COEF_4_OVER_8 : ((m_renderData.SfcSrcChromaSiting & MHW_CHROMA_SITING_VERT_BOTTOM) ? SFC_AVS_INPUT_SITING_COEF_8_OVER_8 : SFC_AVS_INPUT_SITING_COEF_0_OVER_8);
+
+        if (m_renderData.SfcSrcChromaSiting == MHW_CHROMA_SITING_NONE)
         {
-            pMhwAvsState->dwInputVerticalSitting = SFC_AVS_INPUT_SITING_COEF_4_OVER_8;
+            m_renderData.SfcSrcChromaSiting = MHW_CHROMA_SITING_HORZ_LEFT | MHW_CHROMA_SITING_VERT_TOP;
+
+            if (VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat) == VPHAL_COLORPACK_420)  // For 420, default is Left & Center, else default is Left & Top
+            {
+                pMhwAvsState->dwInputVerticalSitting = SFC_AVS_INPUT_SITING_COEF_4_OVER_8;
+            }
         }
+
+        m_renderData.pAvsParams->bForcePolyPhaseCoefs = m_renderData.bForcePolyPhaseCoefs;
+
+        scalingMode = VpHal_GetMhwScalingModeParam(m_renderData.SfcScalingMode);
+        VPHAL_RENDER_CHK_STATUS(m_sfcInterface->SetSfcAVSScalingMode(scalingMode));
+
+        if (m_renderData.SfcStateParams)
+        {
+            pMhwAvsState->dwAVSFilterMode = m_renderData.SfcStateParams->dwAVSFilterMode;
+        }
+        else
+        {
+            pMhwAvsState->dwAVSFilterMode = MEDIASTATE_SFC_AVS_FILTER_8x8;
+        }
+
+        if (pMhwAvsState->dwAVSFilterMode == MEDIASTATE_SFC_AVS_FILTER_8x8)
+        {
+            bUse8x8Filter = true;
+        }
+
+        VPHAL_RENDER_CHK_STATUS(m_sfcInterface->SetSfcSamplerTable(
+            &m_avsState.LumaCoeffs,
+            &m_avsState.ChromaCoeffs,
+            m_renderData.pAvsParams,
+            m_renderData.SfcInputFormat,
+            m_renderData.fScaleX,
+            m_renderData.fScaleY,
+            m_renderData.SfcSrcChromaSiting,
+            bUse8x8Filter,
+            0,
+            0));
     }
-
-    m_renderData.pAvsParams->bForcePolyPhaseCoefs = m_renderData.bForcePolyPhaseCoefs;
-
-    VPHAL_RENDER_CHK_STATUS(m_sfcInterface->SetSfcSamplerTable(
-        &m_avsState.LumaCoeffs,
-        &m_avsState.ChromaCoeffs,
-        m_renderData.pAvsParams,
-        m_renderData.SfcInputFormat,
-        m_renderData.fScaleX,
-        m_renderData.fScaleY,
-        m_renderData.SfcSrcChromaSiting,
-        true,
-        0,
-        0));
 
 finish:
     return eStatus;
@@ -1516,11 +1561,7 @@ MOS_STATUS VphalSfcState::SetupSfcState(
             pOutSurface));
 
     // Setup params related to SFC_AVS_STATE
-    if (m_renderData.bScaling ||
-        m_renderData.bForcePolyPhaseCoefs)
-    {
-        VPHAL_RENDER_CHK_STATUS(SetAvsStateParams());
-    }
+    VPHAL_RENDER_CHK_STATUS(SetAvsStateParams());
 
     // Setup params related to SFC_IEF_STATE
     if (m_renderData.bIEF ||
@@ -1595,13 +1636,14 @@ MOS_STATUS VphalSfcState::SendSfcCmd(
         m_renderData.SfcStateParams,
         &OutSurfaceParam));
 
+    // Send SFC_AVS_STATE command
+    VPHAL_RENDER_CHK_STATUS(pSfcInterface->AddSfcAvsState(
+        pCmdBuffer,
+        &m_avsState.AvsStateParams));
+
     if (m_renderData.bScaling ||
         m_renderData.bForcePolyPhaseCoefs)
     {
-        // Send SFC_AVS_STATE command
-        VPHAL_RENDER_CHK_STATUS(pSfcInterface->AddSfcAvsState(
-            pCmdBuffer,
-            &m_avsState.AvsStateParams));
 
         // Send SFC_AVS_LUMA_TABLE command
         VPHAL_RENDER_CHK_STATUS(pSfcInterface->AddSfcAvsLumaTable(
