@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -29,6 +29,7 @@
 #include "decode_av1_filmgrain_feature_g12.h"
 #include "decode_av1_feature_defs_g12.h"
 #include "mos_defs.h"
+#include "hal_oca_interface.h"
 
 namespace decode 
 {
@@ -108,9 +109,9 @@ MOS_STATUS FilmGrainAppNoisePkt::Prepare()
         m_renderData.walkerParam.alignedRect.right  = m_av1BasicFeature->m_filmGrainProcParams->m_outputSurface->dwWidth;
         m_renderData.walkerParam.alignedRect.bottom = m_av1BasicFeature->m_filmGrainProcParams->m_outputSurface->dwHeight;
         m_renderData.walkerParam.iCurbeLength       = m_renderData.iCurbeLength;
-        m_renderData.walkerParam.iCurbeOffset       = m_curbeOffset;
-        m_renderData.walkerParam.iBindingTable      = m_bindingTable;
-        m_renderData.walkerParam.iMediaID           = m_mediaID;
+        m_renderData.walkerParam.iCurbeOffset       = m_renderData.iCurbeOffset;
+        m_renderData.walkerParam.iBindingTable      = m_renderData.bindingTable;
+        m_renderData.walkerParam.iMediaID           = m_renderData.mediaID;
         m_renderData.walkerParam.iBlocksX           = m_renderData.KernelParam.blocks_x;
         m_renderData.walkerParam.iBlocksY           = m_renderData.KernelParam.blocks_y;
         DECODE_CHK_STATUS(PrepareComputeWalkerParams(m_renderData.walkerParam, m_gpgpuWalkerParams));
@@ -162,6 +163,10 @@ MOS_STATUS FilmGrainAppNoisePkt::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8
     // Initialize command buffer and insert prolog
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnInitCommandBuffer(m_renderHal, commandBuffer, &GenericPrologParams));
     RENDER_PACKET_CHK_STATUS_RETURN(StartStatusReport(statusReportRcs, commandBuffer));
+
+    HalOcaInterface::On1stLevelBBStart(*commandBuffer, *m_osInterface->pOsContext, m_osInterface->CurrentGpuContextHandle,
+        *m_hwInterface->GetMiInterface(), *m_hwInterface->GetMiInterface()->GetMmioRegisters());
+    HalOcaInterface::TraceMessage(*commandBuffer, *m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
 
     if (pOsInterface && !m_av1BasicFeature->m_singleKernelPerfFlag)
     {
@@ -234,6 +239,8 @@ MOS_STATUS FilmGrainAppNoisePkt::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8
     //Status report
     DECODE_CHK_STATUS(EndStatusReport(statusReportRcs, commandBuffer));
     DECODE_CHK_STATUS(UpdateStatusReport(statusReportGlobalCount, commandBuffer));
+
+    HalOcaInterface::On1stLevelBBEnd(*commandBuffer, *m_osInterface);
 
     if (pBatchBuffer)
     {
@@ -369,17 +376,33 @@ MOS_STATUS FilmGrainAppNoisePkt::SetUpSurfaceState()
     surfaceParams.MemObjCtl         = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
     surfaceParams.bRenderTarget     = true;
     surfaceParams.Boundary          = RENDERHAL_SS_BOUNDARY_ORIGINAL;
-    surfaceParams.bUseSinglePlane   = true;
+    if (m_hwInterface->Uses2PlanesInputSurfaceFilmGrain())
+    {
+        surfaceParams.b2PlaneNV12NeededByKernel = true;
+    }
+    else
+    {
+        surfaceParams.bUseSinglePlane      = true;
+        renderHalSurfaceNext.dwHeightInUse = (m_filmGrainProcParams->m_inputSurface->UPlaneOffset.iYOffset * 3) / 2;
+        renderHalSurfaceNext.dwWidthInUse  = 0;
+    }
 
-    renderHalSurfaceNext.dwHeightInUse  = (m_filmGrainProcParams->m_inputSurface->UPlaneOffset.iYOffset * 3) / 2;
-    renderHalSurfaceNext.dwWidthInUse   = 0;
-
-    m_bindingTableIndex[anInputYuv] = SetSurfaceForHwAccess(
+    m_bindingTableIndex[anInputYOrYuv] = SetSurfaceForHwAccess(
         m_filmGrainProcParams->m_inputSurface,
         &renderHalSurfaceNext,
         &surfaceParams,
         isWritable);
-    DECODE_VERBOSEMESSAGE("AN:surface[%d] Input YUV surface index: %d\n", anInputYuv, m_bindingTableIndex[anInputYuv]);
+
+    if (m_hwInterface->Uses2PlanesInputSurfaceFilmGrain())
+    {
+        m_bindingTableIndex[anInputUv] = m_bindingTableIndex[anInputYOrYuv] + 1;
+        DECODE_VERBOSEMESSAGE("AN:surface[%d] Input Y surface index: %d\n", anInputYOrYuv, m_bindingTableIndex[anInputYOrYuv]);
+        DECODE_VERBOSEMESSAGE("AN:surface[%d] Input UV surface index: %d\n", anInputUv, m_bindingTableIndex[anInputUv]);
+    }
+    else
+    {
+        DECODE_VERBOSEMESSAGE("AN:surface[%d] Input YUV surface index: %d\n", anInputYOrYuv, m_bindingTableIndex[anInputYOrYuv]);
+    }
 
     // Output Y/UV surface
     isWritable                  = true;
@@ -463,7 +486,7 @@ MOS_STATUS FilmGrainAppNoisePkt::SetUpSurfaceState()
 
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl     = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary      = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse    = true;
 
@@ -481,7 +504,7 @@ MOS_STATUS FilmGrainAppNoisePkt::SetUpSurfaceState()
 
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl     = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary      = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse    = true;
 
@@ -499,7 +522,7 @@ MOS_STATUS FilmGrainAppNoisePkt::SetUpSurfaceState()
 
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl     = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary      = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse    = true;
 
@@ -532,16 +555,16 @@ MOS_STATUS FilmGrainAppNoisePkt::SetCurbeApplyNoise(
 
     FilmGrainApplyNoiseCurbe curbe;
 
-    curbe.DW0.InputYuvSurfaceIndex                   = anInputYuv;
-    curbe.DW1.OutputYSurfaceIndex                    = anOutputY;
-    curbe.DW2.OutputUvSurfaceIndex                   = anOutputUv;
-    curbe.DW3.YDitheringSurfaceIndex                 = anInputYDithering;
-    curbe.DW4.UDitheringSurfaceIndex                 = anInputUDithering;
-    curbe.DW5.VDitheringSurfaceIndex                 = anInputVDithering;
-    curbe.DW6.RandomValuesForCoordinatesSurfaceIndex = anInputRandomValuesCoordinates;
-    curbe.DW7.YGammaCorrectionLutSurfaceIndex        = anInputYGammaLut;
-    curbe.DW8.UGammaCorrectionLutSurfaceIndex        = anInputUGammaLut;
-    curbe.DW9.VGammaCorrectionLutSurfaceIndex        = anInputVGammaLut;
+    curbe.DW0.InputYuvSurfaceIndex                   = m_bindingTableIndex[anInputYOrYuv];
+    curbe.DW1.OutputYSurfaceIndex                    = m_bindingTableIndex[anOutputY];
+    curbe.DW2.OutputUvSurfaceIndex                   = m_bindingTableIndex[anOutputUv];
+    curbe.DW3.YDitheringSurfaceIndex                 = m_bindingTableIndex[anInputYDithering];
+    curbe.DW4.UDitheringSurfaceIndex                 = m_bindingTableIndex[anInputUDithering];
+    curbe.DW5.VDitheringSurfaceIndex                 = m_bindingTableIndex[anInputVDithering];
+    curbe.DW6.RandomValuesForCoordinatesSurfaceIndex = m_bindingTableIndex[anInputRandomValuesCoordinates];
+    curbe.DW7.YGammaCorrectionLutSurfaceIndex        = m_bindingTableIndex[anInputYGammaLut];
+    curbe.DW8.UGammaCorrectionLutSurfaceIndex        = m_bindingTableIndex[anInputUGammaLut];
+    curbe.DW9.VGammaCorrectionLutSurfaceIndex        = m_bindingTableIndex[anInputVGammaLut];
 
     int apply_y  = (m_picParams->m_filmGrainParams.m_numYPoints > 0) ? 1 : 0;
     int apply_cb = (m_picParams->m_filmGrainParams.m_numCbPoints > 0 || m_picParams->m_filmGrainParams.m_filmGrainInfoFlags.m_fields.m_chromaScalingFromLuma) ? 1 : 0;

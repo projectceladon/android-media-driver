@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -34,19 +34,11 @@
 #include "vp_render_sfc_base.h"
 #include "vp_filter.h"
 
-#define VP_VEBOX_MAX_SLICES          4
 #define VP_MAX_NUM_FFDI_SURFACES     4                                       //!< 2 for ADI plus additional 2 for parallel execution on HSW+
 #define VP_NUM_FFDN_SURFACES         2                                       //!< Number of FFDN surfaces
 #define VP_NUM_STMM_SURFACES         2                                       //!< Number of STMM statistics surfaces
 #define VP_DNDI_BUFFERS_MAX          4                                       //!< Max DNDI buffers
 #define VP_NUM_KERNEL_VEBOX          8                                       //!< Max kernels called at Adv stage
-
-#define VP_VEBOX_RGB_HISTOGRAM_SIZE_PER_SLICE                (256 * 4)
-#define VP_VEBOX_ACE_HISTOGRAM_SIZE_PER_FRAME_PER_SLICE      (256 * 4)
-
-#define VP_VEBOX_RGB_HISTOGRAM_SIZE                      (VP_VEBOX_RGB_HISTOGRAM_SIZE_PER_SLICE * \
-                                                          VP_NUM_RGB_CHANNEL                    * \
-                                                          VP_VEBOX_MAX_SLICES)
 
 #define VP_VEBOX_RGB_ACE_HISTOGRAM_SIZE_RESERVED          (3072 * 4)
 
@@ -68,11 +60,13 @@
 #define VP_VEBOX_RGB_HISTOGRAM_SIZE_PER_SLICE                (256 * 4)
 #define VP_VEBOX_ACE_HISTOGRAM_SIZE_PER_FRAME_PER_SLICE      (256 * 4)
 
-#define VP_VEBOX_MAX_SLICES                              4
+//No matter how many vebox running, the histogram slice number is always 4.
+//When there is only one VEBOX, 0 is written to the other histogram slices by HW.
+#define VP_VEBOX_HISTOGRAM_SLICES_COUNT                      4
 
 #define VP_VEBOX_RGB_HISTOGRAM_SIZE                      (VP_VEBOX_RGB_HISTOGRAM_SIZE_PER_SLICE * \
                                                           VP_NUM_RGB_CHANNEL                    * \
-                                                          VP_VEBOX_MAX_SLICES)
+                                                          VP_VEBOX_HISTOGRAM_SLICES_COUNT)
 #define VP_VEBOX_RGB_ACE_HISTOGRAM_SIZE_RESERVED         (3072 * 4)
 
 //!
@@ -327,7 +321,9 @@ public:
 
     virtual MOS_STATUS Destory() { return MOS_STATUS_SUCCESS; };
 
-    virtual MOS_STATUS Prepare() override { return MOS_STATUS_SUCCESS; };
+    virtual MOS_STATUS Prepare() override;
+
+    virtual MOS_STATUS PrepareState() override;
 
     virtual MOS_STATUS                  AllocateExecRenderData()
     {
@@ -740,13 +736,6 @@ public:
         VP_SURFACE_SETTING                  &surfSetting,
         VP_EXECUTE_CAPS                     packetCaps) override;
 
-    //!
-    //! \brief    Copy and update vebox state
-    //! \details  Copy and update vebox state for input frame.
-    //! \return   MOS_STATUS
-    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
-    //!
-    virtual MOS_STATUS CopyAndUpdateVeboxState();
 
     //!
     //! \brief    Check whether the Vebox command parameters are correct
@@ -761,24 +750,6 @@ public:
         const MHW_VEBOX_STATE_CMD_PARAMS            &VeboxStateCmdParams,
         const MHW_VEBOX_DI_IECP_CMD_PARAMS          &VeboxDiIecpCmdParams,
         const VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS  &VeboxSurfaceStateCmdParams);
-
-    //!
-    //! \brief    Copy Vebox state heap
-    //! \details  Call HW interface function,
-    //!           use Secure_Block_Copy kernel,
-    //!           copy Vebox state heap between different memory
-    //! \return   MOS_STATUS
-    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
-    //!
-    virtual MOS_STATUS CopyVeboxStates();
-
-    //!
-    //! \brief    Vebox state heap update for auto mode features
-    //! \details  Update Vebox indirect states for auto mode features
-    //! \return   MOS_STATUS
-    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
-    //!
-    virtual MOS_STATUS UpdateVeboxStates();
 
     virtual MOS_STATUS QueryStatLayout(
         VEBOX_STAT_QUERY_TYPE QueryType,
@@ -818,6 +789,15 @@ public:
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS VeboxSetPerfTagPaFormat();
+
+    //!
+    //! \brief    Vebox state heap update for auto mode features
+    //! \details  Update Vebox indirect states for auto mode features
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS UpdateVeboxStates();
+
 
 protected:
 
@@ -951,15 +931,18 @@ protected:
     //! \brief    Vebox get the back-end colorspace conversion matrix
     //! \details  When the i/o is A8R8G8B8 or X8R8G8B8, the transfer matrix
     //!           needs to be updated accordingly
-    //! \param    [in] pSrcSurface
-    //!           Pointer to input surface of Vebox
-    //! \param    [in] pOutSurface
-    //!           Pointer to output surface of Vebox
+    //! \param    [in] inputColorSpace
+    //!           color space of vebox input surface
+    //! \param    [in] outputColorSpace
+    //!           color space of vebox output surface
+    //! \param    [in] inputFormat
+    //!           format of vebox input surface
     //! \return   void
     //!
     virtual void VeboxGetBeCSCMatrix(
-        PVPHAL_SURFACE pSrcSurface,
-        PVPHAL_SURFACE pOutSurface);
+        VPHAL_CSPACE    inputColorSpace,
+        VPHAL_CSPACE    outputColorSpace,
+        MOS_FORMAT      inputFormat);
 
     virtual MOS_STATUS SetDiParams(
         bool                    bDiEnabled,
@@ -1035,6 +1018,9 @@ protected:
     static const uint32_t       m_satP1Table[MHW_STE_FACTOR_MAX + 1];
     static const uint32_t       m_satS0Table[MHW_STE_FACTOR_MAX + 1];
     static const uint32_t       m_satS1Table[MHW_STE_FACTOR_MAX + 1];
+
+    MediaScalability           *m_scalability              = nullptr;               //!< scalability
+
 };
 
 }

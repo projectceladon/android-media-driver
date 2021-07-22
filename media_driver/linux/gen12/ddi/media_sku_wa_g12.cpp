@@ -31,7 +31,7 @@
 #include "linux_media_skuwa.h"
 #include "mos_utilities.h"
 
-#define GEN12_VEBOX2_SUBSLICES 24
+static constexpr uint32_t singleVeboxSubSliceNumMax = 24;
 
 //extern template class DeviceInfoFactory<GfxDeviceInfo>;
 typedef DeviceInfoFactory<LinuxDeviceInit> DeviceInit;
@@ -195,7 +195,7 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
     MEDIA_WR_SKU(skuTable, FtrVcs2, 0);
 
     MEDIA_WR_SKU(skuTable, FtrSingleVeboxSlice, 1);
-    if (devInfo->SubSliceCount >= GEN12_VEBOX2_SUBSLICES)
+    if (devInfo->SubSliceCount >= singleVeboxSubSliceNumMax)
     {
         MEDIA_WR_SKU(skuTable, FtrSingleVeboxSlice, 0);
     }
@@ -476,6 +476,104 @@ static bool rklDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
     RegisterDevice(IGFX_ROCKETLAKE, &rklDeviceInit);
 
 #endif
+
+#ifdef IGFX_GEN12_ADLS_SUPPORTED
+static bool InitAdlsMediaSku(struct GfxDeviceInfo *devInfo,
+                             MediaFeatureTable *skuTable,
+                             struct LinuxDriverInfo *drvInfo)
+{
+    if (!InitTglMediaSku(devInfo, skuTable, drvInfo))
+    {
+        return false;
+    }
+
+    if (devInfo->eGTType == GTTYPE_GT0_5)
+    {
+        MEDIA_WR_SKU(skuTable, FtrGT0_5, 1);
+    }
+
+    MEDIA_WR_SKU(skuTable, FtrAV1VLDLSTDecoding, 1);
+
+    //Disable VP8 for ADLS
+    MEDIA_WR_SKU(skuTable, FtrIntelVP8VLDDecoding, 0);
+
+    return true;
+}
+
+static bool InitAdlsMediaWa(struct GfxDeviceInfo* devInfo,
+                            MediaWaTable* waTable,
+                            struct LinuxDriverInfo* drvInfo)
+{
+    if (!InitTglMediaWa(devInfo, waTable, drvInfo))
+    {
+        return false;
+    }
+
+    //ADL-S not need this
+    MEDIA_WR_WA(waTable, Wa_1409820462, 0);
+
+    return true;
+}
+
+static struct LinuxDeviceInit adlsDeviceInit =
+{
+    .productFamily    = IGFX_ALDERLAKE_S,
+    .InitMediaFeature = InitAdlsMediaSku,
+    .InitMediaWa = InitAdlsMediaWa,
+};
+
+static bool adlsDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
+    RegisterDevice(IGFX_ALDERLAKE_S, &adlsDeviceInit);
+#endif
+
+
+#ifdef IGFX_GEN12_ADLP_SUPPORTED
+static bool InitAdlpMediaSku(struct GfxDeviceInfo *devInfo,
+    MediaFeatureTable *                            skuTable,
+    struct LinuxDriverInfo *                       drvInfo)
+{
+    if (!InitTglMediaSku(devInfo, skuTable, drvInfo))
+    {
+        return false;
+    }
+
+    if (devInfo->eGTType == GTTYPE_GT0_5)
+    {
+        MEDIA_WR_SKU(skuTable, FtrGT0_5, 1);
+    }
+
+    MEDIA_WR_SKU(skuTable, FtrAV1VLDLSTDecoding, 1);
+
+    return true;
+}
+
+static bool InitAdlpMediaWa(struct GfxDeviceInfo *devInfo,
+    MediaWaTable *                                waTable,
+    struct LinuxDriverInfo *                      drvInfo)
+{
+    if (!InitTglMediaWa(devInfo, waTable, drvInfo))
+    {
+        return false;
+    }
+
+    //ADL-P not need this
+    MEDIA_WR_WA(waTable, Wa_1409820462, 0);
+
+    return true;
+}
+
+static struct LinuxDeviceInit adlpDeviceInit =
+    {
+        .productFamily    = IGFX_ALDERLAKE_P,
+        .InitMediaFeature = InitAdlpMediaSku,
+        .InitMediaWa      = InitAdlpMediaWa,
+};
+
+static bool adlpDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
+    RegisterDevice(IGFX_ALDERLAKE_P, &adlpDeviceInit);
+
+#endif
+
 
 static struct LinuxDeviceInit tgllpDeviceInit =
 {

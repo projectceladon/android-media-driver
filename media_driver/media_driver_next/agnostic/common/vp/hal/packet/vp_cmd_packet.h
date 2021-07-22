@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -27,6 +27,7 @@
 #include "vp_pipeline_common.h"
 #include "vp_allocator.h"
 #include "vp_packet_shared_context.h"
+#include "media_scalability.h"
 
 namespace vp {
 
@@ -62,9 +63,29 @@ public:
         return MOS_STATUS_SUCCESS;
     };
 
+    virtual MOS_STATUS PrepareState()
+    {
+        return MOS_STATUS_SUCCESS;
+    };
+
     PacketType GetPacketId()
     {
         return m_PacketId;
+    }
+
+    void SetMediaScalability(MediaScalability *scalability)
+    {
+        m_scalability = scalability;
+    }
+
+    MediaScalability *&GetMediaScalability()
+    {
+        return m_scalability;
+    }
+
+    VP_SURFACE_SETTING &GetSurfSetting()
+    {
+        return m_surfSetting;
     }
 
 protected:
@@ -85,6 +106,10 @@ protected:
     PacketType                  m_PacketId = VP_PIPELINE_PACKET_UNINITIALIZED;
     VP_PACKET_SHARED_CONTEXT*   m_packetSharedContext = nullptr;
     VP_SURFACE_SETTING          m_surfSetting;
+    bool                        m_packetResourcesdPrepared = false;
+
+private:
+    MediaScalability *          m_scalability = nullptr;
 };
 }
 #endif // !__VP_CMD_PACKET_H__

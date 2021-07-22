@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015-2019, Intel Corporation
+* Copyright (c) 2015-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -184,6 +184,11 @@ MOS_STATUS MhwMiInterfaceG12::AddPipeControl(
     if (params->bIndirectStatePointersDisable)
     {
         cmd.DW1.IndirectStatePointersDisable = true;
+    }
+
+    if (params->bHdcPipelineFlush)
+    {
+        cmd.DW0.HdcPipelineFlush = true;
     }
 
     MHW_MI_CHK_STATUS(Mhw_AddCommandCmdOrBB(cmdBuffer, batchBuffer, &cmd, cmd.byteSize));
@@ -561,22 +566,8 @@ MOS_STATUS MhwMiInterfaceG12::SetWatchdogTimerThreshold(uint32_t frameWidth, uin
         }
     }
 
-    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
-    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-#if (_DEBUG || _RELEASE_INTERNAL)
-    // User feature config of watchdog timer threshold
-    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_MEDIA_RESET_TH_ID,
-        &userFeatureData,
-        m_osInterface->pOsContext);
-    if (userFeatureData.u32Data != 0)
-    {
-        MediaResetParam.watchdogCountThreshold = userFeatureData.u32Data;
-    }
-#endif
-
+    GetWatchdogThreshold(m_osInterface);
+    
     return MOS_STATUS_SUCCESS;
 }
 

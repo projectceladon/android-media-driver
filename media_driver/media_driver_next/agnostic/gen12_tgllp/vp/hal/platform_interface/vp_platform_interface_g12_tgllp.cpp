@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -39,7 +39,7 @@ extern const Kdll_RuleEntry         g_KdllRuleTable_g12lpcmfc[];
 
 using namespace vp;
 //Kernel Params ---------------------------------------------------------------
-const RENDERHAL_KERNEL_PARAM g_Vebox_KernelParam_g12[VEBOX_KERNEL_BASE_MAX_G12] =
+extern const RENDERHAL_KERNEL_PARAM g_Vebox_KernelParam_m12[VEBOX_KERNEL_BASE_MAX_G12] =
 {
     ///*  GRF_Count
     //    |  BT_Count
@@ -55,6 +55,7 @@ const RENDERHAL_KERNEL_PARAM g_Vebox_KernelParam_g12[VEBOX_KERNEL_BASE_MAX_G12] 
         { 0, 0 ,  0, VP_USE_MEDIA_THREADS_MAX,  0,  0,   0,  0,  0,  0 },    // RESERVED
         { 4, 34,  0, VP_USE_MEDIA_THREADS_MAX,  0,  2,  64,  8,  1,  1 },    // UPDATEDNSTATE
 };
+
 MOS_STATUS VpPlatformInterfaceG12Tgllp::InitVpVeboxSfcHwCaps(VP_VEBOX_ENTRY_REC *veboxHwEntry, uint32_t veboxEntryCount,
                                                             VP_SFC_ENTRY_REC *sfcHwEntry, uint32_t sfcEntryCount)
 {
@@ -73,16 +74,13 @@ MOS_STATUS VpPlatformInterfaceG12Tgllp::InitVpRenderHwCaps()
 {
     m_modifyKdllFunctionPointers = nullptr;
 #if defined(ENABLE_KERNELS)
-    if (!m_kernel.GetKdllState())
-    {
-        m_kernel.InitVPKernel(
-            g_KdllRuleTable_g12lpcmfc,
-            IGVPKRN_G12_TGLLP_CMFC,
-            IGVPKRN_G12_TGLLP_CMFC_SIZE,
-            IGVPKRN_G12_TGLLP_CMFCPATCH,
-            IGVPKRN_G12_TGLLP_CMFCPATCH_SIZE,
-            m_modifyKdllFunctionPointers);
-    }
+    InitVPFCKernels(
+        g_KdllRuleTable_g12lpcmfc,
+        IGVPKRN_G12_TGLLP_CMFC,
+        IGVPKRN_G12_TGLLP_CMFC_SIZE,
+        IGVPKRN_G12_TGLLP_CMFCPATCH,
+        IGVPKRN_G12_TGLLP_CMFCPATCH_SIZE,
+        m_modifyKdllFunctionPointers);
 #endif
 
     return MOS_STATUS_SUCCESS;
@@ -136,7 +134,11 @@ RENDERHAL_KERNEL_PARAM VpPlatformInterfaceG12Tgllp::GetVeboxKernelSettings(uint3
     MOS_ZeroMemory(&kernelParam, sizeof(RENDERHAL_KERNEL_PARAM));
     if (iKDTIndex < VEBOX_KERNEL_BASE_MAX_G12)
     {
-        kernelParam = g_Vebox_KernelParam_g12[iKDTIndex];
+        kernelParam = g_Vebox_KernelParam_m12[iKDTIndex];
+    }
+    else
+    {
+        VP_PUBLIC_ASSERTMESSAGE("not support in Vebox Kernels");
     }
     return kernelParam;
 }

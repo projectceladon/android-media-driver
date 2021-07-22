@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2020, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -39,6 +39,7 @@
 
 #include "mhw_vdbox_mfx_interface.h"
 #include "mhw_vdbox_hcp_interface.h"
+#include "mhw_vdbox_avp_interface.h"
 #include "mhw_vdbox_huc_interface.h"
 #include "mhw_vdbox_vdenc_interface.h"
 
@@ -376,6 +377,7 @@ protected:
     MhwSfcInterface                 *m_sfcInterface = nullptr;        //!< Pointer to Mhw sfc interface
     MhwVdboxMfxInterface            *m_mfxInterface = nullptr;        //!< Pointer to Mhw mfx interface
     MhwVdboxHcpInterface            *m_hcpInterface = nullptr;        //!< Pointer to Mhw hcp interface
+    MhwVdboxAvpInterface            *m_avpInterface = nullptr;        //!< Pointer to Mhw avp interface
     MhwVdboxHucInterface            *m_hucInterface = nullptr;        //!< Pointer to Mhw huc interface
     MhwVdboxVdencInterface          *m_vdencInterface = nullptr;      //!< Pointer to Mhw vdenc interface
 
@@ -657,6 +659,18 @@ public:
     inline MhwVdboxHcpInterface *GetHcpInterface()
     {
         return m_hcpInterface;
+    }
+
+    //!
+    //! \brief    Get avp interface
+    //! \details  Get avp interface in codechal hw interface
+    //!
+    //! \return   [out] MhwVdboxAvpInterface*
+    //!           Interface got.
+    //!
+    MhwVdboxAvpInterface *GetAvpInterface()
+    {
+        return m_avpInterface;
     }
 
     //!
@@ -1569,6 +1583,11 @@ public:
     }
 
     virtual bool UsesRenderEngine(CODECHAL_FUNCTION codecFunction, uint32_t standard);
+
+    virtual bool Uses2PlanesInputSurfaceFilmGrain()
+    {
+        return false;
+    }
 
     //!
     //! \brief    Get film grain kernel info

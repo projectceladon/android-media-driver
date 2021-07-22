@@ -25,7 +25,7 @@
 #include "vp_allocator.h"
 #include "vp_cmd_packet.h"
 #include "vp_kernelset.h"
-#include "vp_render_kernel_obj.h"
+#include "vp_render_common.h"
 
 namespace vp
 {
@@ -47,9 +47,7 @@ class VpRenderCmdPacket : virtual public RenderCmdPacket, virtual public VpCmdPa
 {
 public:
     VpRenderCmdPacket(MediaTask* task, PVP_MHWINTERFACE hwInterface, PVpAllocator& allocator, VPMediaMemComp* mmc, VpKernelSet* kernelSet);
-    virtual ~VpRenderCmdPacket() 
-    {
-    };
+    virtual ~VpRenderCmdPacket();
 
     MOS_STATUS Prepare() override;
 
@@ -65,7 +63,11 @@ public:
 
     virtual MOS_STATUS Submit(MOS_COMMAND_BUFFER* commandBuffer, uint8_t packetPhase = otherPacket) override;
 
+    virtual MOS_STATUS SubmitWithMultiKernel(MOS_COMMAND_BUFFER* commandBuffer, uint8_t packetPhase = otherPacket);
+
     MOS_STATUS SetVeboxUpdateParams(PVEBOX_UPDATE_PARAMS params);
+
+    MOS_STATUS SetSecureCopyParams(bool copyNeeded);
 
     MOS_STATUS PacketInit(
         VP_SURFACE* inputSurface,
@@ -74,8 +76,17 @@ public:
         VP_SURFACE_SETTING& surfSetting,
         VP_EXECUTE_CAPS packetCaps) override;
 
+    MOS_STATUS SetSRParams(PRENDER_SR_PARAMS params);
+
+    MOS_STATUS SetSRChromaParams(PRENDER_SR_PARAMS params);
+
+    MOS_STATUS ReadSRWeights(uint16_t *pBuf, const uint8_t*pWeight, const uint32_t uWeightSize, uint32_t outChannels, uint32_t inChannels, uint32_t nWeightsPerChannel, uint32_t layer);
+
 protected:
+
     MOS_STATUS KernelStateSetup();
+
+    virtual MOS_STATUS SetupSamplerStates();
 
     virtual MOS_STATUS SetupSurfaceState();
 
@@ -83,25 +94,78 @@ protected:
 
     virtual VP_SURFACE* GetSurface(SurfaceType type);
 
+    virtual MOS_STATUS SetupWalkerParams();
+
     virtual MOS_STATUS SetupMediaWalker() override;
+
+    MOS_STATUS SendMediaStates(PRENDERHAL_INTERFACE pRenderHal, PMOS_COMMAND_BUFFER pCmdBuffer);
 
     MOS_STATUS InitRenderHalSurface(
         VP_SURFACE         &surface,
         RENDERHAL_SURFACE  &renderSurface);
 
+    MOS_STATUS InitStateHeapSurface(
+        SurfaceType        type,
+        RENDERHAL_SURFACE& renderSurface);
+
     // comments here: Hight overwite params if needed
-    MOS_STATUS UpdateRenderSurface(RENDERHAL_SURFACE_NEXT &renderSurface, KERNEL_SURFACE2D_STATE_PARAM& kernelParams);
+    MOS_STATUS UpdateRenderSurface(RENDERHAL_SURFACE_NEXT &renderSurface, KERNEL_SURFACE_STATE_PARAM& kernelParams);
+
+    MOS_STATUS SetSamplerAvsParams(MHW_SAMPLER_STATE_PARAM& samplerStateParam, PRENDER_SR_PARAMS params);
+
+   MOS_STATUS SamplerAvsCalcScalingTable(
+        MHW_AVS_PARAMS& avsParameters,
+        MOS_FORMAT      SrcFormat,
+        bool            bVertical,
+        float           fLumaScale,
+        float           fChromaScale,
+        uint32_t        dwChromaSiting,
+        bool            b8TapAdaptiveEnable);
+
+    MOS_STATUS SetNearestModeTable(
+        int32_t   * iCoefs,
+        uint32_t dwPlane,
+        bool     bBalancedFilter);
+
+     MOS_STATUS CalcPolyphaseTablesUV(
+        int32_t * piCoefs,
+        float fLanczosT,
+        float fInverseScaleFactor);
+
+    MOS_STATUS CalcPolyphaseTablesY(
+        int32_t     *iCoefs,
+        float      fScaleFactor,
+        uint32_t   dwPlane,
+        MOS_FORMAT srcFmt,
+        float      fHPStrength,
+        bool       bUse8x8Filter,
+        uint32_t   dwHwPhase);
+
+    MOS_STATUS CalcPolyphaseTablesUVOffset(
+        int32_t* piCoefs,
+        float   fLanczosT,
+        float   fInverseScaleFactor,
+        int32_t iUvPhaseOffset);
 
 protected:
 
     KERNEL_OBJECTS                     m_kernelObjs;
+    KERNEL_CONFIGS                     m_kernelConfigs;
+    KERNEL_RENDER_DATA                 m_kernelRenderData;
 
-    int32_t                            m_kernelIndex = 0;
-    Kdll_FilterEntry                  *m_filter = nullptr;                                       // Kernel Filter (points to base of filter array)
+    Kdll_FilterEntry                  *m_filter = nullptr;    // Kernel Filter (points to base of filter array)
     bool                               m_firstFrame = true;
-    std::vector<KernelId>              m_kernelId;
+    
     VpKernelSet                       *m_kernelSet = nullptr;
     VpRenderKernelObj                 *m_kernel    = nullptr; // processing kernel pointer
+
+    RENDER_KERNEL_PARAMS               m_renderKernelParams;
+    KERNEL_SAMPLER_STATE_GROUP         m_kernelSamplerStateGroup;
+
+    KERNEL_SUBMISSION_MODE             m_submissionMode = MULTI_KERNELS_WITH_MULTI_MEDIA_STATES;
+    uint32_t                           m_slmSize        = 0;
+    uint32_t                           m_totalCurbeSize = 0;
+    uint32_t                           m_totoalInlineSize = 0;
 };
 }
 

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -144,6 +144,7 @@ MOS_STATUS MosInterface::CreateOsStreamState(
     EXTRA_PARAMS         extraParams)
 {
     MOS_USER_FEATURE_VALUE_DATA userFeatureData     = {};
+    MOS_STATUS                  eStatusUserFeature  = MOS_STATUS_SUCCESS;
 
     MOS_OS_FUNCTION_ENTER;
     MOS_OS_CHK_NULL_RETURN(streamState);
@@ -189,6 +190,13 @@ MOS_STATUS MosInterface::CreateOsStreamState(
     (*streamState)->veEnable                = false;
     (*streamState)->phasedSubmission        = true;
 
+    auto skuTable = GetSkuTable(*streamState);
+    MOS_OS_CHK_NULL_RETURN(skuTable);
+    if (MEDIA_IS_SKU(skuTable, FtrGucSubmission))
+    {
+        (*streamState)->bGucSubmission = true;
+    }
+
 #if (_DEBUG || _RELEASE_INTERNAL)
     // read the "Force VDBOX" user feature key
     // 0: not force
@@ -200,21 +208,11 @@ MOS_STATUS MosInterface::CreateOsStreamState(
         (MOS_CONTEXT_HANDLE) nullptr);
     (*streamState)->eForceVdbox = userFeatureData.u32Data;
 
-    // read the "Force VEBOX" user feature key
-    // 0: not force
-    MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MosUtilities::MosUserFeatureReadValueID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_FORCE_VEBOX_ID,
-        &userFeatureData,
-        (MOS_CONTEXT_HANDLE) nullptr);
-    (*streamState)->eForceVebox = (MOS_FORCE_VEBOX)userFeatureData.u32Data;
-
     //Read Scalable/Legacy Decode mode on Gen11+
     //1:by default for scalable decode mode
     //0:for legacy decode mode
     MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MOS_STATUS eStatusUserFeature = MosUtilities::MosUserFeatureReadValueID(
+    eStatusUserFeature = MosUtilities::MosUserFeatureReadValueID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_ENABLE_HCP_SCALABILITY_DECODE_ID,
         &userFeatureData,
@@ -236,6 +234,14 @@ MOS_STATUS MosInterface::CreateOsStreamState(
         (MOS_CONTEXT_HANDLE) nullptr);
     (*streamState)->frameSplit = (uint32_t)userFeatureData.i32Data;
 
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_UserFeature_ReadValue_ID(
+        NULL,
+        __MEDIA_USER_FEATURE_VALUE_ENABLE_GUC_SUBMISSION_ID,
+        &userFeatureData,
+    nullptr);
+    (*streamState)->bGucSubmission = (*streamState)->bGucSubmission && ((uint32_t)userFeatureData.i32Data);
+
     //KMD Virtual Engine DebugOverride
     // 0: not Override
     MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -245,36 +251,53 @@ MOS_STATUS MosInterface::CreateOsStreamState(
         &userFeatureData,
         (MOS_CONTEXT_HANDLE) nullptr);
     (*streamState)->enableDbgOvrdInVirtualEngine = userFeatureData.u32Data ? true : false;
-
-    // UMD Vebox Virtual Engine Scalability Mode
-    // 0: disable. can set to 1 only when KMD VE is enabled.
-    MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    eStatusUserFeature = MosUtilities::MosUserFeatureReadValueID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_ENABLE_VEBOX_SCALABILITY_MODE_ID,
-        &userFeatureData,
-        (MOS_CONTEXT_HANDLE) nullptr);
-    (*streamState)->veboxScalabilityMode = userFeatureData.u32Data ? MOS_SCALABILITY_ENABLE_MODE_DEFAULT : MOS_SCALABILITY_ENABLE_MODE_FALSE;
-    if((*streamState)->veboxScalabilityMode
-        && (eStatusUserFeature == MOS_STATUS_SUCCESS))
-    {
-        //user's value to enable scalability
-        (*streamState)->veboxScalabilityMode = MOS_SCALABILITY_ENABLE_MODE_USER_FORCE;
-        (*streamState)->enableDbgOvrdInVirtualEngine = true;
-
-        if ((*streamState)->eForceVebox == MOS_FORCE_VEBOX_NONE)
-        {
-            (*streamState)->eForceVebox = MOS_FORCE_VEBOX_1_2;
-        }
-    }
-    else if ((!(*streamState)->veboxScalabilityMode)
-        && (eStatusUserFeature == MOS_STATUS_SUCCESS))
-    {
-        (*streamState)->enableDbgOvrdInVirtualEngine = true;
-        (*streamState)->eForceVebox        = MOS_FORCE_VEBOX_NONE;
-    }
-
 #endif
+
+    if (component == COMPONENT_VPCommon ||
+        component == COMPONENT_VPreP    ||
+        component == COMPONENT_LibVA)
+    {
+        // UMD Vebox Virtual Engine Scalability Mode
+        // 0: disable. can set to 1 only when KMD VE is enabled.
+        MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
+        eStatusUserFeature = MosUtilities::MosUserFeatureReadValueID(
+            nullptr,
+            __MEDIA_USER_FEATURE_VALUE_ENABLE_VEBOX_SCALABILITY_MODE_ID,
+            &userFeatureData,
+            (MOS_CONTEXT_HANDLE) nullptr);
+        (*streamState)->veboxScalabilityMode = userFeatureData.u32Data ? MOS_SCALABILITY_ENABLE_MODE_DEFAULT : MOS_SCALABILITY_ENABLE_MODE_FALSE;
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+        if((*streamState)->veboxScalabilityMode
+            && (eStatusUserFeature == MOS_STATUS_SUCCESS))
+        {
+            //user's value to enable scalability
+            (*streamState)->veboxScalabilityMode = MOS_SCALABILITY_ENABLE_MODE_USER_FORCE;
+            (*streamState)->enableDbgOvrdInVirtualEngine = true;
+
+            if ((*streamState)->eForceVebox == MOS_FORCE_VEBOX_NONE)
+            {
+                (*streamState)->eForceVebox = MOS_FORCE_VEBOX_1_2;
+            }
+        }
+        else if ((!(*streamState)->veboxScalabilityMode)
+            && (eStatusUserFeature == MOS_STATUS_SUCCESS))
+        {
+            (*streamState)->enableDbgOvrdInVirtualEngine = true;
+            (*streamState)->eForceVebox        = MOS_FORCE_VEBOX_NONE;
+        }
+
+        // read the "Force VEBOX" user feature key
+        // 0: not force
+        MosUtilities::MosZeroMemory(&userFeatureData, sizeof(userFeatureData));
+        MosUtilities::MosUserFeatureReadValueID(
+            nullptr,
+            __MEDIA_USER_FEATURE_VALUE_FORCE_VEBOX_ID,
+            &userFeatureData,
+            (MOS_CONTEXT_HANDLE) nullptr);
+        (*streamState)->eForceVebox = (MOS_FORCE_VEBOX)userFeatureData.u32Data;
+#endif
+    }
 
     MOS_USER_FEATURE_VALUE_WRITE_DATA userFeatureWriteData = __NULL_USER_FEATURE_VALUE_WRITE_DATA__;
     // Report if pre-si environment is in use
@@ -378,10 +401,15 @@ MOS_STATUS MosInterface::InitStreamParameters(
 
     if (MEDIA_IS_SKU(&context->SkuTable, FtrContextBasedScheduling))
     {
+        MOS_TraceEventExt(EVENT_GPU_CONTEXT_CREATE, EVENT_TYPE_START,
+                          &eStatus, sizeof(eStatus), nullptr, 0);
         context->intel_context = mos_gem_context_create_ext(context->bufmgr, 0);
         MOS_OS_CHK_NULL_RETURN(context->intel_context);
         context->intel_context->vm = mos_gem_vm_create(context->bufmgr);
         MOS_OS_CHK_NULL_RETURN(context->intel_context->vm);
+        MOS_TraceEventExt(EVENT_GPU_CONTEXT_CREATE, EVENT_TYPE_END,
+                          &context->intel_context, sizeof(void *),
+                          &eStatus, sizeof(eStatus));
     }
     else  //use legacy context create ioctl for pre-gen11 platforms
     {
@@ -619,6 +647,32 @@ MOS_STATUS MosInterface::SetGpuContext(
     streamState->currentGpuContextHandle = gpuContext;
 
     return MOS_STATUS_SUCCESS;
+}
+
+void *MosInterface::GetGpuContextbyHandle(
+    MOS_STREAM_HANDLE  streamState,
+    GPU_CONTEXT_HANDLE gpuContextHandle)
+{
+    if (!streamState || !streamState->osDeviceContext)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    auto gpuContextMgr = streamState->osDeviceContext->GetGpuContextMgr();
+    if (!gpuContextMgr)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    GpuContextNext *gpuContext = gpuContextMgr->GetGpuContext(gpuContextHandle);
+
+    if (!gpuContext)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+    }
+    return (void *)gpuContext;
 }
 
 MOS_STATUS MosInterface::AddCommand(

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1185,7 +1185,6 @@ MOS_STATUS RenderHal_AllocateStateHeaps(
     uint32_t                     dwSizeSSH;
     uint32_t                     dwSizeISH;
     uint32_t                     dwSizeMediaState;
-    uint32_t                     dwSizeSamplers;
     PMHW_STATE_HEAP              pDshHeap;
     PMHW_STATE_HEAP              pIshHeap;
     int32_t                      i;
@@ -1301,7 +1300,8 @@ MOS_STATUS RenderHal_AllocateStateHeaps(
         // Sampler states
         pStateHeap->dwOffsetSampler     = dwSizeMediaState;
         pStateHeap->dwSizeSampler       = MOS_ALIGN_CEIL(pSettings->iSamplers * pHwSizes->dwSizeSamplerState,  MHW_SAMPLER_STATE_ALIGN);
-        dwSizeMediaState               += pSettings->iMediaIDs * pStateHeap->dwSizeSampler;
+        pStateHeap->dwSizeSamplers      = pStateHeap->dwSizeSampler;
+        dwSizeMediaState               += pSettings->iMediaIDs * pStateHeap->dwSizeSamplers;
 
         // Sampler 8x8 State table is allocated in this area
         pStateHeap->dwOffsetSampler8x8Table = dwSizeMediaState;
@@ -1339,8 +1339,8 @@ MOS_STATUS RenderHal_AllocateStateHeaps(
         dwSizeMediaState += pStateHeap->dwSizeSamplerIndirect;
 
         // Get the total size of all the samplers
-        dwSizeSamplers                  = MOS_ALIGN_CEIL((dwSizeMediaState - dwOffsetSamplers),  MHW_SAMPLER_STATE_ALIGN);
-        dwSizeMediaState               += pSettings->iMediaIDs * dwSizeSamplers;
+        pStateHeap->dwSizeSamplers      = MOS_ALIGN_CEIL((dwSizeMediaState - dwOffsetSamplers),  MHW_SAMPLER_STATE_ALIGN);
+        dwSizeMediaState               += pSettings->iMediaIDs * pStateHeap->dwSizeSamplers;
 
         // Sampler 8x8 State table is part of Sampler8x8 state
         pStateHeap->dwOffsetSampler8x8Table   = 0;
@@ -4870,7 +4870,6 @@ MOS_STATUS RenderHal_InitCommandBuffer(
     PMOS_INTERFACE              pOsInterface;
     MHW_GENERIC_PROLOG_PARAMS   genericPrologParams;
     MOS_STATUS                  eStatus;
-    MEDIA_SYSTEM_INFO           *pGtSystemInfo;
     bool                        isRender;
 
     //---------------------------------------------
@@ -4884,8 +4883,6 @@ MOS_STATUS RenderHal_InitCommandBuffer(
 
     eStatus         = MOS_STATUS_SUCCESS;
     pOsInterface    = pRenderHal->pOsInterface;
-    pGtSystemInfo   = pOsInterface->pfnGetGtSystemInfo(pOsInterface);
-    MHW_RENDERHAL_CHK_NULL(pGtSystemInfo);
 
     // Send Start Marker command
     isRender = MOS_RCS_ENGINE_USED(pOsInterface->pfnGetGpuContext(pOsInterface));
@@ -5720,7 +5717,7 @@ MOS_STATUS RenderHal_SetupInterfaceDescriptor(
     pParams->iMediaId             = pInterfaceDescriptorParams->iMediaID;
     pParams->dwKernelOffset       = pKernelAllocation->dwOffset;
     pParams->dwSamplerOffset      = pMediaState->dwOffset + pStateHeap->dwOffsetSampler +
-                                  pInterfaceDescriptorParams->iMediaID * pStateHeap->dwSizeSampler;
+                                  pInterfaceDescriptorParams->iMediaID * pStateHeap->dwSizeSamplers;
     pParams->dwSamplerCount       = pKernelAllocation->Params.Sampler_Count;
     pParams->dwBindingTableOffset = pInterfaceDescriptorParams->iBindingTableID * pStateHeap->iBindingTableSize;
     pParams->iCurbeOffset         = pInterfaceDescriptorParams->iCurbeOffset;
@@ -6291,12 +6288,12 @@ MOS_STATUS RenderHal_SetSamplerStates(
     // Offset/Pointer to Samplers
     iOffsetSampler   = pMediaState->dwOffset +                      // Offset to media state
                        pStateHeap->dwOffsetSampler +                // Offset to sampler area
-                       iMediaID * pStateHeap->dwSizeSampler;        // Samplers for media ID
+                       iMediaID * pStateHeap->dwSizeSamplers;        // Samplers for media ID
     pPtrSampler      = pStateHeap->pGshBuffer + iOffsetSampler;     // Pointer to Samplers
 
     iOffsetSampler   = pMediaState->dwOffset +                      // Offset to media state
                        pStateHeap->dwOffsetSamplerAVS +             // Offset to sampler area
-                       iMediaID * pStateHeap->dwSizeSamplerAVS;     // Samplers for media ID
+                       iMediaID * pStateHeap->dwSizeSamplers;     // Samplers for media ID
     pPtrSamplerAvs   = pStateHeap->pGshBuffer + iOffsetSampler;     // Pointer to AVS Samplers
 
     // Setup sampler states
@@ -6684,6 +6681,7 @@ MOS_STATUS RenderHal_SendSurfaceStateEntry(
     SURFACE_STATE_TOKEN_COMMON *pSurfaceStateToken = (SURFACE_STATE_TOKEN_COMMON*)pParams->pSurfaceToken;
 
     uint32_t* pdwCmd = (uint32_t*)(pParams->pIndirectStateBase + iSurfaceStateOffset);
+    uint32_t locationInCmd = 0;
 
     // Copy surface state from system memory to graphics memory/indirect state
     if (pSurfaceStateToken->DW3.SurfaceStateType == MEDIASTATE_BTS_DEFAULT_TYPE)
@@ -6694,6 +6692,7 @@ MOS_STATUS RenderHal_SendSurfaceStateEntry(
         // Patch offset is 8 DW from the surface state base
         pdwCmd += 8;
         iSurfaceStateOffset += 8 * sizeof(uint32_t);
+        locationInCmd = 8;
     }
     else
     {
@@ -6703,12 +6702,19 @@ MOS_STATUS RenderHal_SendSurfaceStateEntry(
         // Patch offset is 6 DW from the surface state base
         pdwCmd += 6;
         iSurfaceStateOffset += 6 * sizeof(uint32_t);
+        locationInCmd = 6;
     }
 
     if (pOsInterface->bUsesGfxAddress)
     {
         *pdwCmd = pSurfaceStateToken->DW4.SurfaceBaseAddress;
         *(pdwCmd + 1) = pSurfaceStateToken->DW5.SurfaceBaseAddress64;
+    }
+
+    if (pSurfaceStateToken->pResourceInfo)
+    {
+        HalOcaInterface::DumpResourceInfo(*pCmdBuffer, *pOsInterface, *(PMOS_RESOURCE)(pSurfaceStateToken->pResourceInfo), (MOS_HW_COMMAND)pSurfaceStateToken->DW0.DriverID,
+            locationInCmd, 0);
     }
 
     MOS_PATCH_ENTRY_PARAMS PatchEntryParams;
@@ -6732,6 +6738,7 @@ MOS_STATUS RenderHal_SendSurfaceStateEntry(
 
     MOS_MEMCOMP_STATE mmcMode = MOS_MEMCOMP_DISABLED;
     PMOS_RESOURCE pMosResource = (PMOS_RESOURCE)pSurfaceStateToken->pResourceInfo;
+    MHW_RENDERHAL_CHK_NULL_RETURN(pMosResource);
     if (pOsInterface->pfnGetMemoryCompressionMode)
     {
         pOsInterface->pfnGetMemoryCompressionMode(pOsInterface, pMosResource, &mmcMode);

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -176,6 +176,7 @@ namespace decode{
     MOS_STATUS Av1DecodePicPkt::AllocateFixedResources()
     {
         DECODE_FUNC_CALL();
+
         if (m_av1BasicFeature->m_usingDummyWl == true)
         {
             MhwVdboxAvpBufferSizeParams avpBufSizeParam;
@@ -202,6 +203,7 @@ namespace decode{
                 CODECHAL_PAGE_SIZE), "CdfTableBuffer");
             DECODE_CHK_NULL(m_bwdAdaptCdfBufForDummyWL);
         }
+
         return MOS_STATUS_SUCCESS;
     }
 
@@ -229,7 +231,7 @@ namespace decode{
         avpBufSizeParam.m_curFrameTileNum   = m_av1PicParams->m_tileCols * m_av1PicParams->m_tileRows;
         avpBufSizeParam.m_numTileCol        = m_av1PicParams->m_tileCols;
 
-        //Intrabc Decoded Output Frame Buffer
+        // Intrabc Decoded Output Frame Buffer
         if (m_av1PicParams->m_picInfoFlags.m_fields.m_allowIntrabc)
         {
             MOS_SURFACE m_destSurface = m_av1BasicFeature->m_destSurface;
@@ -256,7 +258,7 @@ namespace decode{
             }
         }
 
-        //Bitstream decode line rowstore buffer
+        // Bitstream decode line rowstore buffer
         if (!m_avpInterface->IsBtdlRowstoreCacheEnabled())
         {
             DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
@@ -278,8 +280,7 @@ namespace decode{
             }
         }
 
-
-        //bitstream decode tile line buffer
+        // Bitstream decode tile line buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             bsdTileLineBuf,
             &avpBufSizeParam));
@@ -298,7 +299,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Intra Prediction Line Rowstore Read/Write Buffer
+        // Intra Prediction Line Rowstore Read/Write Buffer
         if (!m_avpInterface->IsIpdlRowstoreCacheEnabled())
         {
             DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
@@ -320,7 +321,7 @@ namespace decode{
             }
         }
 
-        //Intra Prediction Tile Line Rowstore Read/Write Buffer
+        // Intra Prediction Tile Line Rowstore Read/Write Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             intraPredTileLine,
             &avpBufSizeParam));
@@ -339,7 +340,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Spatial motion vector Line rowstore buffer
+        // Spatial motion vector Line rowstore buffer
         if (!m_avpInterface->IsSmvlRowstoreCacheEnabled())
         {
             DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
@@ -361,7 +362,7 @@ namespace decode{
             }
         }
 
-        //spatial motion vector Tile Line Buffer
+        // Spatial motion vector Tile Line Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             spatialMvTileLineBuf,
             &avpBufSizeParam));
@@ -381,7 +382,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Loop Restoration Meta Tile Column Read/Write Buffer
+        // Loop Restoration Meta Tile Column Read/Write Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             lrMetaTileCol,
             &avpBufSizeParam));
@@ -400,7 +401,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Loop Restoration Filter Tile Read/Write Line Y Buffer
+        // Loop Restoration Filter Tile Read/Write Line Y Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             lrTileLineY,
             &avpBufSizeParam));
@@ -438,7 +439,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Loop Restoration Filter Tile Read/Write Line V Buffer
+        // Loop Restoration Filter Tile Read/Write Line V Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             lrTileLineV,
             &avpBufSizeParam));
@@ -521,7 +522,7 @@ namespace decode{
             }
         }
 
-        //Deblocking Filter Tile Line Y Buffer
+        // Deblocking Filter Tile Line Y Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             deblockTileLineYBuf,
             &avpBufSizeParam));
@@ -541,7 +542,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Deblocking Filter Tile Line V Buffer
+        // Deblocking Filter Tile Line V Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             deblockTileLineVBuf,
             &avpBufSizeParam));
@@ -561,7 +562,7 @@ namespace decode{
                 avpBufSizeParam.m_bufferSize));
         }
 
-        //Deblocking Filter Tile Line U Buffer
+        // Deblocking Filter Tile Line U Buffer
         DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
             deblockTileLineUBuf,
             &avpBufSizeParam));
@@ -1151,20 +1152,21 @@ namespace decode{
 
         DECODE_CHK_STATUS(FixAvpPipeBufAddrParams(pipeBufAddrParams));
 
-        PMOS_BUFFER curInitCdfBuffer = tempBuffers->GetCurBuffer()->initCdfBuf;
+        DECODE_CHK_NULL(tempBuffers->GetCurBuffer()->initCdfBuf);
+        PMOS_BUFFER curInitCdfBuffer = tempBuffers->GetCurBuffer()->initCdfBuf->buffer;
         DECODE_CHK_NULL(curInitCdfBuffer);
         pipeBufAddrParams.m_cdfTableInitializationBuffer = &(curInitCdfBuffer->OsResource);
 
         if (!m_av1PicParams->m_picInfoFlags.m_fields.m_disableFrameEndUpdateCdf)
         {
-            PMOS_BUFFER curBwdCdfBuffer = tempBuffers->GetCurBuffer()->bwdAdaptCdfBuf;
+            PMOS_BUFFER curBwdCdfBuffer = tempBuffers->GetCurBuffer()->bwdAdaptCdfBuf.buffer;
             DECODE_CHK_NULL(curBwdCdfBuffer);
             pipeBufAddrParams.m_cdfTableBwdAdaptationBuffer = &(curBwdCdfBuffer->OsResource);
         }
 
         if (m_av1PicParams->m_av1SegData.m_enabled && m_av1PicParams->m_av1SegData.m_updateMap)
         {
-            PMOS_BUFFER curSegIDWriteBuffer = tempBuffers->GetCurBuffer()->segIdWriteBuf;
+            PMOS_BUFFER curSegIDWriteBuffer = tempBuffers->GetCurBuffer()->segIdWriteBuf.buffer;
             DECODE_CHK_NULL(curSegIDWriteBuffer);
             pipeBufAddrParams.m_segmentIdWriteBuffer = &(curSegIDWriteBuffer->OsResource);
         }
@@ -1176,7 +1178,9 @@ namespace decode{
             if (useSegMapFromPrevFrame && refFrames.CheckSegForPrimFrame(*m_av1PicParams))
             {
                 auto tempBuf = tempBuffers->GetBufferByFrameIndex(prevFrameIdx);
-                pipeBufAddrParams.m_segmentIdReadBuffer = tempBuf ? &(tempBuf->segIdBuf->OsResource) : nullptr;
+                auto segIdBuf = tempBuf ? tempBuf->segIdBuf : nullptr;
+                auto buf = segIdBuf ? segIdBuf->buffer : nullptr;
+                pipeBufAddrParams.m_segmentIdReadBuffer = buf ? &(buf->OsResource) : nullptr;
             }
         }
 
@@ -1431,32 +1435,6 @@ namespace decode{
         return MOS_STATUS_SUCCESS;
     }
 
-    MOS_STATUS Av1DecodePicPkt::SetInloopFilterStateParams(MhwVdboxAvpPicStateParams& picStateParams)
-    {
-        DECODE_FUNC_CALL();
-
-        MOS_ZeroMemory(&picStateParams, sizeof(picStateParams));
-        picStateParams.m_picParams = m_av1PicParams;
-
-        if (m_av1PicParams->m_picInfoFlags.m_fields.m_useSuperres)
-        {
-            //setup super-res step/offset for luma/chroma, per av1_upscale_normative_rows()
-            if (m_av1BasicFeature->m_tileCoding.m_curTile == 0)
-            {
-                m_av1BasicFeature->m_tileCoding.GetUpscaleConvolveStepX0(*m_av1PicParams, false); // Luma
-                m_av1BasicFeature->m_tileCoding.GetUpscaleConvolveStepX0(*m_av1PicParams, true);  // Chroma
-            }
-
-            uint16_t col = m_av1BasicFeature->m_tileCoding.m_tileDesc[m_av1BasicFeature->m_tileCoding.m_curTile].m_tileColumn;
-            picStateParams.m_lumaPlaneXStepQn     = m_av1BasicFeature->m_tileCoding.m_lumaXStepQn;
-            picStateParams.m_lumaPlaneX0Qn        = m_av1BasicFeature->m_tileCoding.m_lumaX0Qn[col];
-            picStateParams.m_chromaPlaneXStepQn   = m_av1BasicFeature->m_tileCoding.m_chromaXStepQn;
-            picStateParams.m_chromaPlaneX0Qn      = m_av1BasicFeature->m_tileCoding.m_chromaX0Qn[col];
-        }
-
-        return MOS_STATUS_SUCCESS;
-    }
-
     MOS_STATUS Av1DecodePicPkt::CalculateCommandSize(uint32_t &commandBufferSize, uint32_t &requestedPatchListSize)
     {
         DECODE_FUNC_CALL();
@@ -1534,6 +1512,7 @@ namespace decode{
                 picStateParams.m_referenceFrameSignBias[refFrame] = 0;
             }
         }
+
         return MOS_STATUS_SUCCESS;
     }
 

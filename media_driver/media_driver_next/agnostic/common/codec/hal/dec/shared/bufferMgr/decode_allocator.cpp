@@ -108,7 +108,8 @@ BufferArray * DecodeAllocator::AllocateBufferArray(
 
 MOS_SURFACE* DecodeAllocator::AllocateSurface(
     const uint32_t width, const uint32_t height, const char* nameOfSurface,
-    MOS_FORMAT format, bool isCompressible, ResourceUsage resUsageType)
+    MOS_FORMAT format, bool isCompressible, ResourceUsage resUsageType,
+    MOS_TILE_MODE_GMM gmmTileMode)
 {
     if (!m_allocator)
         return nullptr;
@@ -124,6 +125,7 @@ MOS_SURFACE* DecodeAllocator::AllocateSurface(
     allocParams.pBufName    = nameOfSurface;
     allocParams.bIsCompressible = isCompressible;
     allocParams.ResUsageType = static_cast<MOS_HW_RESOURCE_DEF>(resUsageType);
+    allocParams.m_tileModeByForce = gmmTileMode;
 
     MOS_SURFACE* surface = m_allocator->AllocateSurface(allocParams, false, COMPONENT_Decode);
     if (surface == nullptr)
@@ -330,7 +332,8 @@ MOS_STATUS DecodeAllocator::Resize(MOS_SURFACE* &surface, const uint32_t widthNe
     {
         MOS_SURFACE* surfaceNew = AllocateSurface(widthNew, heightNew, nameOfSurface,
             surface->Format, surface->bCompressible,
-            ConvertGmmResourceUsage(surface->OsResource.pGmmResInfo->GetCachePolicyUsage()));
+            ConvertGmmResourceUsage(surface->OsResource.pGmmResInfo->GetCachePolicyUsage()), 
+            surface->TileModeGMM);
         DECODE_CHK_NULL(surfaceNew);
 
         Destroy(surface);
@@ -380,7 +383,12 @@ MOS_STATUS DecodeAllocator::Destroy(MOS_SURFACE* & surface)
         return MOS_STATUS_SUCCESS;
     }
 
-    DECODE_CHK_STATUS(m_allocator->DestroySurface(surface));
+    //if free the compressed surface, need set the sync dealloc flag as 1 for sync dealloc for aux table update
+    MOS_GFXRES_FREE_FLAGS resFreeFlags = {0};
+    resFreeFlags.SynchronousDestroy = m_allocator->isSyncFreeNeededForMMCSurface(surface) ? 1 : 0;
+    DECODE_NORMALMESSAGE("SynchronousDestroy flag (%d) for surface\n", resFreeFlags.SynchronousDestroy);
+
+    DECODE_CHK_STATUS(m_allocator->DestroySurface(surface, resFreeFlags));
     surface = nullptr;
     return MOS_STATUS_SUCCESS;
 }
@@ -393,7 +401,13 @@ MOS_STATUS DecodeAllocator::Destroy(MOS_SURFACE& surface)
     DECODE_CHK_NULL(dup);
     DECODE_CHK_STATUS(MOS_SecureMemcpy(dup, sizeof(MOS_SURFACE), &surface, sizeof(MOS_SURFACE)));
 
-    DECODE_CHK_STATUS(m_allocator->DestroySurface(dup));
+    //if free the compressed surface, need set the sync dealloc flag as 1 for sync dealloc for aux table update
+    MOS_GFXRES_FREE_FLAGS resFreeFlags = {0};
+    resFreeFlags.SynchronousDestroy = m_allocator->isSyncFreeNeededForMMCSurface(dup) ? 1 : 0;
+    DECODE_NORMALMESSAGE("SynchronousDestroy flag (%d) for surface\n", resFreeFlags.SynchronousDestroy);
+
+    DECODE_CHK_STATUS(m_allocator->DestroySurface(dup, resFreeFlags));
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -506,11 +520,7 @@ MOS_STATUS DecodeAllocator::GetSurfaceInfo(PMOS_SURFACE surface)
     surface->dwMipSlice   = 0;
     surface->S3dChannel   = MOS_S3D_NONE;
     DECODE_CHK_STATUS(m_allocator->GetSurfaceInfo(&surface->OsResource, surface));
-    // Refine the surface's Yoffset as offset from Y plane, refer YOffsetForUCbInPixel, YOffsetForVCbInPixel.
-    surface->UPlaneOffset.iYOffset = (surface->UPlaneOffset.iSurfaceOffset - surface->dwOffset) / surface->dwPitch +
-                                      surface->UPlaneOffset.iYOffset;
-    surface->VPlaneOffset.iYOffset = (surface->VPlaneOffset.iSurfaceOffset - surface->dwOffset) / surface->dwPitch +
-                                      surface->VPlaneOffset.iYOffset;
+
     return MOS_STATUS_SUCCESS;
 
 }

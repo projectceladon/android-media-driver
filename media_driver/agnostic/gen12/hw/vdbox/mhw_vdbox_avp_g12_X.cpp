@@ -80,7 +80,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1BTDLROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1BTDLROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -90,7 +90,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1SMVLROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1SMVLROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -100,7 +100,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1IPDLROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1IPDLROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -109,7 +109,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1DFLYROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1DFLYROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -119,7 +119,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1DFLUROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1DFLUROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -129,7 +129,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1DFLVROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1DFLVROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -139,7 +139,7 @@ void MhwVdboxAvpInterfaceG12::InitRowstoreUserFeatureSettings()
 #if (_DEBUG || _RELEASE_INTERNAL)
         MOS_UserFeature_ReadValue_ID(
             nullptr,
-            __MEDIA_USER_FEATURE_VALUE_AV1CDEFROWSTORECACHE_DISABLE_ID_G12,
+            __MEDIA_USER_FEATURE_VALUE_AV1CDEFROWSTORECACHE_DISABLE_ID,
             &userFeatureData,
             m_osInterface->pOsContext);
 #endif // _DEBUG || _RELEASE_INTERNAL
@@ -279,7 +279,7 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::GetAvpPrimitiveCommandSize(
 
     if(m_decodeInUse)
     {
-        if (MEDIA_IS_SKU(m_osInterface->pfnGetSkuTable(m_osInterface), FtrAV1VLDLSTDecoding))
+        if (MEDIA_IS_SKU(m_osInterface->pfnGetSkuTable(m_osInterface), FtrAV1VLDLSTDecoding) && !m_osInterface->bSimIsActive)
         {
             maxSize =
                 mhw_vdbox_avp_g12_X::AVP_TILE_CODING_CMD_LST::byteSize +
@@ -1854,7 +1854,7 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpTileCodingCmd(
 
     if (m_decodeInUse)
     {
-        if (MEDIA_IS_SKU(m_osInterface->pfnGetSkuTable(m_osInterface), FtrAV1VLDLSTDecoding))
+        if (MEDIA_IS_SKU(m_osInterface->pfnGetSkuTable(m_osInterface), FtrAV1VLDLSTDecoding) && !m_osInterface->bSimIsActive)
         {
             MHW_MI_CHK_STATUS(AddAvpDecodeTileCodingCmdLst(cmdBuffer, batchBuffer, params));
         }

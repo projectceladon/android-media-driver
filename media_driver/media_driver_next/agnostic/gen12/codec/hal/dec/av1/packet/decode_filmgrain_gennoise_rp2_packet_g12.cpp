@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -29,6 +29,7 @@
 #include "decode_av1_filmgrain_feature_g12.h"
 #include "decode_av1_feature_defs_g12.h"
 #include "mos_defs.h"
+#include "hal_oca_interface.h"
 
 namespace decode
 {
@@ -106,9 +107,9 @@ MOS_STATUS FilmGrainRp2Packet::Prepare()
         m_renderData.walkerParam.alignedRect.right  = m_av1BasicFeature->m_filmGrainProcParams->m_outputSurface->dwWidth;
         m_renderData.walkerParam.alignedRect.bottom = m_av1BasicFeature->m_filmGrainProcParams->m_outputSurface->dwHeight;
         m_renderData.walkerParam.iCurbeLength       = m_renderData.iCurbeLength;
-        m_renderData.walkerParam.iCurbeOffset       = m_curbeOffset;
-        m_renderData.walkerParam.iBindingTable      = m_bindingTable;
-        m_renderData.walkerParam.iMediaID           = m_mediaID;
+        m_renderData.walkerParam.iCurbeOffset       = m_renderData.iCurbeOffset;
+        m_renderData.walkerParam.iBindingTable      = m_renderData.bindingTable;
+        m_renderData.walkerParam.iMediaID           = m_renderData.mediaID;
         m_renderData.walkerParam.iBlocksX           = m_renderData.KernelParam.blocks_x;
         m_renderData.walkerParam.iBlocksY           = m_renderData.KernelParam.blocks_y;
         DECODE_CHK_STATUS(PrepareComputeWalkerParams(m_renderData.walkerParam, m_gpgpuWalkerParams));
@@ -159,6 +160,10 @@ MOS_STATUS FilmGrainRp2Packet::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8_t
 
     // Initialize command buffer and insert prolog
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnInitCommandBuffer(m_renderHal, commandBuffer, &GenericPrologParams));
+
+    HalOcaInterface::On1stLevelBBStart(*commandBuffer, *m_osInterface->pOsContext, m_osInterface->CurrentGpuContextHandle,
+        *m_hwInterface->GetMiInterface(), *m_hwInterface->GetMiInterface()->GetMmioRegisters());
+    HalOcaInterface::TraceMessage(*commandBuffer, *m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
 
     if(pOsInterface && !m_av1BasicFeature->m_singleKernelPerfFlag)
     {
@@ -230,6 +235,8 @@ MOS_STATUS FilmGrainRp2Packet::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8_t
     {
         RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMediaStateFlush(commandBuffer, nullptr, &FlushParam));
     }
+
+    HalOcaInterface::On1stLevelBBEnd(*commandBuffer, *m_osInterface);
 
     if (pBatchBuffer)
     {
@@ -446,11 +453,11 @@ MOS_STATUS FilmGrainRp2Packet::SetUpSurfaceState()
     DECODE_VERBOSEMESSAGE("RP2: surface[%d] Output V dithering surface BT index: %d\n", rp2OutputVDithering, m_bindingTableIndex[rp2OutputVDithering]);
 
     //Y coefficients - input
-    isWritable                  = true;
+    isWritable                  = false;
     m_filmGrainFeature->m_yCoeffSurface->size = 32 * sizeof(short);
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl     = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary      = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse    = true;
     MOS_ZeroMemory(&renderHalSurfaceNext, sizeof(RENDERHAL_SURFACE_NEXT));
@@ -462,11 +469,11 @@ MOS_STATUS FilmGrainRp2Packet::SetUpSurfaceState()
     DECODE_VERBOSEMESSAGE("RP2: surface[%d] Y coeff input surface BT index: %d\n", rp2InputYCoeff, m_bindingTableIndex[rp2InputYCoeff]);
 
     //U coefficients - input
-    isWritable                      = true;
+    isWritable                      = false;
     m_filmGrainFeature->m_uCoeffSurface->size = 32 * sizeof(short);
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl         = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary          = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse        = true;
     MOS_ZeroMemory(&renderHalSurfaceNext, sizeof(RENDERHAL_SURFACE_NEXT));
@@ -478,11 +485,11 @@ MOS_STATUS FilmGrainRp2Packet::SetUpSurfaceState()
     DECODE_VERBOSEMESSAGE("RP2: surface[%d] U coeff input surface BT index: %d\n", rp2InputUCoeff, m_bindingTableIndex[rp2InputUCoeff]);
     
     //V coefficients - input
-    isWritable                  = true;
+    isWritable                  = false;
     m_filmGrainFeature->m_vCoeffSurface->size = 32 * sizeof(short);
     MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
     surfaceParams.MemObjCtl     = m_hwInterface->GetCacheabilitySettings()[MOS_CODEC_RESOURCE_USAGE_SURFACE_ELLC_LLC_L3].Value;
-    surfaceParams.bRenderTarget = true;
+    surfaceParams.bRenderTarget = false;
     surfaceParams.Boundary      = RENDERHAL_SS_BOUNDARY_ORIGINAL;
     surfaceParams.bBufferUse    = true;
     MOS_ZeroMemory(&renderHalSurfaceNext, sizeof(RENDERHAL_SURFACE_NEXT)); 

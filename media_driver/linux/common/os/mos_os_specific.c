@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1660,6 +1660,57 @@ MOS_STATUS Mos_Specific_SetGpuContextHandle(
 }
 
 //!
+//! \brief    Get GPU context pointer
+//! \details  Get GPU context pointer
+//! \param    PMOS_INTERFACE pOsInterface
+//!           [in] Pointer to OS Interface
+//! \param    GPU_CONTEXT_HANDLE gpuContextHandle
+//!           [in] GPU Context Handle
+//! \return   void *
+//!           a pointer to a gpu context
+//!
+void *Mos_Specific_GetGpuContextbyHandle(
+    PMOS_INTERFACE     pOsInterface,
+    GPU_CONTEXT_HANDLE gpuContextHandle)
+{
+    MOS_OS_FUNCTION_ENTER;
+
+    if (!pOsInterface)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    if (pOsInterface->apoMosEnabled)
+    {
+        return MosInterface::GetGpuContextbyHandle(pOsInterface->osStreamState, gpuContextHandle);
+    }
+
+    OsContextSpecific *pOsContextSpecific = static_cast<OsContextSpecific *>(pOsInterface->osContextPtr);
+    if(!pOsContextSpecific)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    GpuContextMgr *gpuContextMgr = pOsContextSpecific->GetGpuContextMgr();
+    if (!gpuContextMgr)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    GpuContext *gpuContext = gpuContextMgr->GetGpuContext(gpuContextHandle);
+    if (!gpuContext)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return nullptr;
+    }
+
+    return (void *)gpuContext;
+}
+
+//!
 //! \brief    Get GPU context Manager
 //! \param    PMOS_INTERFACE pOsInterface
 //!           [in] Pointer to OS Interface
@@ -2434,7 +2485,6 @@ MOS_STATUS Mos_Specific_AllocateResource(
     switch(tileformat)
     {
         case MOS_TILE_Y:
-            GmmParams.Flags.Gpu.MMC        = pParams->bIsCompressible;
             tileformat_linux               = I915_TILING_Y;
             if (pParams->bIsCompressible && MEDIA_IS_SKU(&pOsInterface->pOsContext->SkuTable, FtrE2ECompression))
             {
@@ -3359,6 +3409,19 @@ MOS_STATUS Mos_Specific_SetPatchEntry(
     MOS_OS_CHK_NULL_RETURN(pOsInterface);
     MOS_OS_CHK_NULL_RETURN(pParams);
 
+#if (_DEBUG || _RELEASE_INTERNAL)
+    if (!pParams->bUpperBoundPatch && pParams->presResource)
+    {
+        uint32_t handle = pParams->presResource->bo?pParams->presResource->bo->handle:0;
+        uint32_t eventData[] = {handle, pParams->uiResourceOffset,
+                                pParams->uiPatchOffset, pParams->bWrite,
+                                pParams->HwCommandType, pParams->forceDwordOffset,
+                                pParams->patchType};
+        MOS_TraceEventExt(EVENT_RESOURCE_PATCH, EVENT_TYPE_INFO2,
+                          &eventData, sizeof(eventData),
+                          nullptr, 0);
+    }
+#endif
     if (pOsInterface->apoMosEnabled)
     {
         return MosInterface::SetPatchEntry(pOsInterface->osStreamState, pParams);
@@ -3928,6 +3991,12 @@ void Mos_Specific_ReturnCommandBuffer(
     {
         MOS_OS_ASSERTMESSAGE("Invalid parameters.");
         return;
+    }
+
+    // Need to ensure 4K extra padding for HW requirement.
+    if (pCmdBuffer && pCmdBuffer->iRemaining < EXTRA_PADDING_NEEDED)
+    {
+        MOS_OS_ASSERTMESSAGE("Need to ensure 4K extra padding for HW requirement.");
     }
 
     if (pOsInterface->apoMosEnabled)
@@ -4961,6 +5030,79 @@ MOS_STATUS Mos_Specific_DestroyGpuContext(
     MOS_UNUSED(mosGpuCxt);
     return eStatus;
 }
+
+//!
+//! \brief    Destroy Compute GPU context
+//! \details  Destroy Compute GPU context
+//!           [in] Pointer to OS interface structure
+//! \param    GPU_CONTEXT_HANDLE gpuContextHandle
+//!           [in] GPU Context handle
+//! \return   MOS_STATUS
+//!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+//!
+MOS_STATUS Mos_Specific_DestroyGpuComputeContext(
+    PMOS_INTERFACE        osInterface,
+    GPU_CONTEXT_HANDLE    gpuContextHandle)
+{
+    MOS_OS_FUNCTION_ENTER;
+
+    MOS_OS_CHK_NULL_RETURN(osInterface);
+    if(MOS_GPU_CONTEXT_INVALID_HANDLE == gpuContextHandle)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid compute gpu context handle.");
+        return MOS_STATUS_INVALID_HANDLE;
+    }
+    if (!osInterface->modularizedGpuCtxEnabled || Mos_Solo_IsEnabled(nullptr))
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    OsContextSpecific *pOsContextSpecific = static_cast<OsContextSpecific *>(osInterface->osContextPtr);
+    MOS_OS_CHK_NULL_RETURN(pOsContextSpecific);
+
+    GPU_CONTEXT_HANDLE iGpuContextHandle = pOsContextSpecific->GetGpuContextHandle(MOS_GPU_CONTEXT_CM_COMPUTE);
+    if(iGpuContextHandle == gpuContextHandle)
+    {
+        MOS_OS_ASSERTMESSAGE("It will be destroyed in osInterface destroy.");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    iGpuContextHandle = pOsContextSpecific->GetGpuContextHandle(MOS_GPU_CONTEXT_COMPUTE);
+    if(iGpuContextHandle == gpuContextHandle)
+    {
+        MOS_OS_ASSERTMESSAGE("It will be destroyed in osInterface destroy.");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    if (osInterface->apoMosEnabled)
+    {
+        auto gpuContext = MosInterface::GetGpuContext(osInterface->osStreamState, gpuContextHandle);
+        MOS_OS_CHK_NULL_RETURN(gpuContext);
+
+        MOS_GPU_CONTEXT gpuContextName = gpuContext->GetCpuContextID();
+        if(gpuContextName != MOS_GPU_CONTEXT_CM_COMPUTE && gpuContextName != MOS_GPU_CONTEXT_COMPUTE)
+        {
+            MOS_OS_ASSERTMESSAGE("It is not compute gpu context and it will be destroyed in osInterface destroy.");
+            return MOS_STATUS_SUCCESS;
+        }
+        return MosInterface::DestroyGpuContext(osInterface->osStreamState, gpuContextHandle);
+    }
+
+    GpuContextMgr *gpuContextMgr = pOsContextSpecific->GetGpuContextMgr();
+    MOS_OS_CHK_NULL_RETURN(gpuContextMgr);
+    GpuContext *gpuContext = gpuContextMgr->GetGpuContext(gpuContextHandle);
+    MOS_OS_CHK_NULL_RETURN(gpuContext);
+
+    MOS_GPU_CONTEXT gpuContextName = gpuContext->GetCpuContextID();
+    if(gpuContextName != MOS_GPU_CONTEXT_CM_COMPUTE && gpuContextName != MOS_GPU_CONTEXT_COMPUTE)
+    {
+        MOS_OS_ASSERTMESSAGE("It is not compute gpu context and it will be destroyed in osInterface destroy.");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    gpuContextMgr->DestroyGpuContext(gpuContext);
+    return MOS_STATUS_SUCCESS;
+ }
 
 //!
 //! \brief    Sets the perf tag
@@ -7078,10 +7220,12 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
     PLATFORM                            Platform;
     MOS_STATUS                          eStatus;
     MOS_USER_FEATURE_VALUE_DATA         userFeatureData;
+    MOS_STATUS                          eStatusUserFeature;
 
     MOS_OS_FUNCTION_ENTER;
 
     eStatus = MOS_STATUS_SUCCESS;
+    eStatusUserFeature = MOS_STATUS_SUCCESS;
 
     // Get platform information
     memset(&Platform, 0, sizeof(PLATFORM));
@@ -7098,12 +7242,19 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
         osInterface->pVEInterf = nullptr;
         osInterface->VEEnable = false;
 
+        auto skuTable = osInterface->pfnGetSkuTable(osInterface);
+        MOS_OS_CHK_NULL_RETURN(skuTable);
+        if (MEDIA_IS_SKU(skuTable, FtrGucSubmission))
+        {
+            osInterface->bGucSubmission = true;
+        }
+
 #if (_DEBUG || _RELEASE_INTERNAL)
         //Read Scalable/Legacy Decode mode on Gen11+
         //1:by default for scalable decode mode
         //0:for legacy decode mode
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-        MOS_STATUS eStatusUserFeature = MOS_UserFeature_ReadValue_ID(
+        eStatusUserFeature = MOS_UserFeature_ReadValue_ID(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_HCP_SCALABILITY_DECODE_ID,
             &userFeatureData,
@@ -7125,6 +7276,14 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             nullptr);
         osInterface->frameSplit = (uint32_t)userFeatureData.i32Data;
 
+        MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+        MOS_UserFeature_ReadValue_ID(
+            NULL,
+            __MEDIA_USER_FEATURE_VALUE_ENABLE_GUC_SUBMISSION_ID,
+            &userFeatureData,
+        nullptr);
+        osInterface->bGucSubmission = osInterface->bGucSubmission && ((uint32_t)userFeatureData.i32Data);
+
         // read the "Force VEBOX" user feature key
         // 0: not force
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -7144,6 +7303,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             &userFeatureData,
             nullptr);
         osInterface->bEnableDbgOvrdInVE = userFeatureData.u32Data ? true : false;
+#endif
 
         // UMD Vebox Virtual Engine Scalability Mode
         // 0: disable. can set to 1 only when KMD VE is enabled.
@@ -7154,12 +7314,13 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             &userFeatureData,
             nullptr);
         osInterface->bVeboxScalabilityMode = userFeatureData.u32Data ? MOS_SCALABILITY_ENABLE_MODE_DEFAULT : MOS_SCALABILITY_ENABLE_MODE_FALSE;
+
+#if (_DEBUG || _RELEASE_INTERNAL)
         if(osInterface->bVeboxScalabilityMode
             && (eStatusUserFeature == MOS_STATUS_SUCCESS))
         {
             //user's value to enable scalability
             osInterface->bVeboxScalabilityMode = MOS_SCALABILITY_ENABLE_MODE_USER_FORCE;
-            osInterface->bEnableDbgOvrdInVE    = true;
 
             if (osInterface->eForceVebox == MOS_FORCE_VEBOX_NONE)
             {
@@ -7169,9 +7330,18 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
         else if ((!osInterface->bVeboxScalabilityMode)
             && (eStatusUserFeature == MOS_STATUS_SUCCESS))
         {
-            osInterface->bEnableDbgOvrdInVE = true;
             osInterface->eForceVebox        = MOS_FORCE_VEBOX_NONE;
         }
+
+        // read the "Force VEBOX" user feature key
+        // 0: not force
+        MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+        MOS_UserFeature_ReadValue_ID(
+            NULL,
+            __MEDIA_USER_FEATURE_VALUE_FORCE_VEBOX_ID,
+            &userFeatureData,
+            nullptr);
+        osInterface->eForceVebox = (MOS_FORCE_VEBOX)userFeatureData.u32Data;
 #endif
     }
 
@@ -7397,6 +7567,7 @@ MOS_STATUS Mos_Specific_InitInterface(
     pOsInterface->pfnCreateGpuContext                       = Mos_Specific_CreateGpuContext;
     pOsInterface->pfnCreateGpuComputeContext                = Mos_Specific_CreateGpuComputeContext;
     pOsInterface->pfnDestroyGpuContext                      = Mos_Specific_DestroyGpuContext;
+    pOsInterface->pfnDestroyGpuComputeContext               = Mos_Specific_DestroyGpuComputeContext;
     pOsInterface->pfnIsGpuContextValid                      = Mos_Specific_IsGpuContextValid;
     pOsInterface->pfnSyncOnResource                         = Mos_Specific_SyncOnResource;
     pOsInterface->pfnSyncGpuContext                         = Mos_Specific_SyncGpuContext;
@@ -7455,6 +7626,7 @@ MOS_STATUS Mos_Specific_InitInterface(
 
     pOsInterface->pfnSetGpuContextHandle                    = Mos_Specific_SetGpuContextHandle;
     pOsInterface->pfnGetGpuContextMgr                       = Mos_Specific_GetGpuContextMgr;
+    pOsInterface->pfnGetGpuContextbyHandle                  = Mos_Specific_GetGpuContextbyHandle;
 
     pOsUserFeatureInterface->bIsNotificationSupported   = false;
     pOsUserFeatureInterface->pOsInterface               = pOsInterface;

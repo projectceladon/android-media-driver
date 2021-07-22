@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -87,6 +87,7 @@ typedef struct _VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS
     PVP_SURFACE                     pSurfDNOutput;
     PVP_SURFACE                     pSurfSkinScoreOutput;
     bool                            bDIEnable;
+    bool                            b3DlutEnable;
 } VPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS, *PVPHAL_VEBOX_SURFACE_STATE_CMD_PARAMS;
 
 enum GFX_MEDIA_VEBOX_DI_OUTPUT_MODE
@@ -412,6 +413,17 @@ public:
 
     uint32_t *pAceCacheData  = nullptr;
 
+    virtual MOS_STATUS InitChromaSampling()
+    {
+        MOS_ZeroMemory(&m_chromaSampling, sizeof(MHW_VEBOX_CHROMA_SAMPLING));
+        m_chromaSampling.BypassChromaUpsampling                     = 1;
+        m_chromaSampling.ChromaUpsamplingCoSitedHorizontalOffset    = 0;
+        m_chromaSampling.ChromaUpsamplingCoSitedVerticalOffset      = 0;
+        m_chromaSampling.BypassChromaDownsampling                   = 1;
+        m_chromaSampling.ChromaDownsamplingCoSitedHorizontalOffset  = 0;
+        m_chromaSampling.ChromaDownsamplingCoSitedVerticalOffset    = 0;
+        return MOS_STATUS_SUCCESS;
+    }
 protected:
     MHW_VEBOX_DNDI_PARAMS   m_veboxDNDIParams = {};
     MHW_VEBOX_IECP_PARAMS   m_veboxIecpParams = {};

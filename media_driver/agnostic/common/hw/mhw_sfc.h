@@ -46,7 +46,7 @@ static const float MHW_SFC_MAX_SCALINGFACTOR = 8.0F;
 static const uint32_t MHW_SFC_SFD_BUFF_HEIGHT_BAR = 4160;
 
 #define NEED_SFD_LINE_BUFFER(_SURFACE_HEIGHT) ((_SURFACE_HEIGHT) > MHW_SFC_SFD_BUFF_HEIGHT_BAR)
-#define SFD_LINE_BUFFER_SIZE(_SURFACE_HEIGHT) (NEED_SFD_LINE_BUFFER(_SURFACE_HEIGHT) ? (uint32_t)ceil(((_SURFACE_HEIGHT) - MHW_SFC_SFD_BUFF_HEIGHT_BAR) / 10 * MHW_SFC_CACHELINE_SIZE) : 0)
+#define SFD_LINE_BUFFER_SIZE(_SURFACE_HEIGHT) (NEED_SFD_LINE_BUFFER(_SURFACE_HEIGHT) ? (uint32_t)ceil((_SURFACE_HEIGHT) * MHW_SFC_CACHELINE_SIZE / 10) : 0)
 
 typedef class MhwSfcInterface MHW_SFC_INTERFACE, *PMHW_SFC_INTERFACE;
 
@@ -220,6 +220,7 @@ typedef struct _MHW_SFC_STATE_PARAMS
     MOS_FORMAT                      OutputFrameFormat;                          // Output Frame Format
     uint32_t                        dwInputFrameHeight;                         // Input Frame Height
     uint32_t                        dwInputFrameWidth;                          // Input Frame Width
+    MOS_FORMAT                      InputFrameFormat;                           // Input Frame Format
 
     // Scaling parameters
     uint32_t                        dwAVSFilterMode;                            // Bilinear, 5x5 or 8x8
@@ -498,6 +499,24 @@ public:
     virtual MOS_STATUS GetInputFrameWidthHeightAlignUnit(uint32_t &widthAlignUnit, uint32_t &heightAlignUnit,
         bool bVdbox, CODECHAL_STANDARD codecStandard, CodecDecodeJpegChromaType jpegChromaType);
 
+    //!
+    //! \brief    Set Sfc Index
+    //! \details  Set Sfc Index
+    //! \param    [in] dwSfcIndex
+    //!           set Sfc Index
+    //! \param    [in] dwSfcCount
+    //!           set Sfc Count
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    virtual MOS_STATUS SetSfcIndex(
+        uint32_t dwSfcIndex,
+        uint32_t dwSfcCount)
+    {
+        MOS_UNUSED(dwSfcIndex);
+        MOS_UNUSED(dwSfcCount);
+        return MOS_STATUS_SUCCESS;
+    }
+
 protected:
 
     MhwSfcInterface(PMOS_INTERFACE pOsInterface);
@@ -542,6 +561,20 @@ public:
     {
         SFC_PIPE_MODE_VDBOX = 0,
         SFC_PIPE_MODE_VEBOX = 1
+    };
+
+    enum SfcScalabMode
+    {
+        sfcScalabModeSingle = 0, //!< 0 - single pipe
+        sfcScalabModeLeftCol,    //!< 1 - left most column
+        sfcScalabModeRightCol,   //!< 2 - right most column
+        sfcScalabModeMiddleCol   //!< 3 - middle column
+    };
+
+    enum SfcScalabTileType
+    {
+        sfcScalabRealTile = 0, //!< 0 - real tile
+        sfcScalabVirtualTile   //!< 1 - virtual tile
     };
 
 public:

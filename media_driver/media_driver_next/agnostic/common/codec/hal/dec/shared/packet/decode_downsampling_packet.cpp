@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -59,11 +59,10 @@ MOS_STATUS DecodeDownSamplingPkt::Init()
     m_downSampling = dynamic_cast<DecodeDownSamplingFeature *>(
         featureManager->GetFeature(DecodeFeatureIDs::decodeDownSampling));
     DECODE_CHK_NULL(m_downSampling);
-
-    m_sfcInterface = MOS_New(MediaSfcInterface, m_hwInterface->GetOsInterface());
+    m_sfcInterface = MOS_New(MediaSfcInterface, m_hwInterface->GetOsInterface(), m_pipeline->GetMmcState());
     DECODE_CHK_NULL(m_sfcInterface);
 
-    MOS_ZeroMemory(&m_SfcParams, sizeof(m_SfcParams));
+    MOS_ZeroMemory(&m_sfcParams, sizeof(m_sfcParams));
     return MOS_STATUS_SUCCESS;
 }
 
@@ -83,8 +82,8 @@ MOS_STATUS DecodeDownSamplingPkt::Execute(MOS_COMMAND_BUFFER& cmdBuffer)
         return MOS_STATUS_SUCCESS;
     }
 
-    DECODE_CHK_STATUS(InitSfcParams(m_SfcParams));
-    if (m_sfcInterface->IsParameterSupported(m_SfcParams) == MOS_STATUS_SUCCESS)
+    DECODE_CHK_STATUS(InitSfcParams(m_sfcParams));
+    if (m_sfcInterface->IsParameterSupported(m_sfcParams) == MOS_STATUS_SUCCESS)
     {
         m_isSupported = true;
     }
@@ -95,7 +94,7 @@ MOS_STATUS DecodeDownSamplingPkt::Execute(MOS_COMMAND_BUFFER& cmdBuffer)
 
     if (m_isSupported)
     {
-        DECODE_CHK_STATUS(m_sfcInterface->Render(&cmdBuffer, m_SfcParams));
+        DECODE_CHK_STATUS(m_sfcInterface->Render(&cmdBuffer, m_sfcParams));
     }
 
     return MOS_STATUS_SUCCESS;
@@ -134,6 +133,7 @@ MOS_STATUS DecodeDownSamplingPkt::InitSfcParams(VDBOX_SFC_PARAMS &sfcParams)
                                     m_downSampling->m_outputSurfaceRegion.m_height;
 
     sfcParams.videoParams.codecStandard = m_basicFeature->m_standard;
+    sfcParams.scalingMode         = m_downSampling->m_scalingMode;
 
     // If histogram is enabled
     if (m_downSampling->m_histogramDestSurf || m_downSampling->m_histogramDebug)

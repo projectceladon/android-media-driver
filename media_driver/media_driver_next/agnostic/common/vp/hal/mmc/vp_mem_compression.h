@@ -41,7 +41,7 @@ public:
     //!
     VPMediaMemComp(
         PMOS_INTERFACE       osInterface,
-        PVP_MHWINTERFACE     vpInterface);
+        VP_MHWINTERFACE     &vpInterface);
 
     //!
     //! \brief    Copy constructor
@@ -57,6 +57,8 @@ public:
     //! \brief    Destructor
     //!
     virtual ~VPMediaMemComp() {};
+
+    MOS_STATUS DecompressVPResource(PVPHAL_SURFACE surface);
 
 };
 

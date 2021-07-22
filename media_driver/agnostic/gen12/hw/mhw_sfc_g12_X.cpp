@@ -84,10 +84,10 @@ MOS_STATUS MhwSfcInterfaceG12::AddSfcState(
     wVYOffset           = 0;
 
     // Check input/output size
-    MHW_ASSERT(pSfcStateParamsG12->dwInputFrameWidth   >= MHW_SFC_MIN_WIDTH);
-    MHW_ASSERT(pSfcStateParamsG12->dwInputFrameHeight  >= MHW_SFC_MIN_HEIGHT);
-    MHW_ASSERT(pSfcStateParamsG12->dwOutputFrameWidth  <= MHW_SFC_MAX_WIDTH);
-    MHW_ASSERT(pSfcStateParamsG12->dwOutputFrameHeight <= MHW_SFC_MAX_HEIGHT);
+    MHW_ASSERT(pSfcStateParamsG12->dwInputFrameWidth   >= m_minWidth);
+    MHW_ASSERT(pSfcStateParamsG12->dwInputFrameHeight  >= m_minHeight);
+    MHW_ASSERT(pSfcStateParamsG12->dwOutputFrameWidth  <= m_maxWidth);
+    MHW_ASSERT(pSfcStateParamsG12->dwOutputFrameHeight <= m_maxHeight);
 
     // Set DW0
     if (pSfcStateParamsG12->sfcPipeMode == MhwSfcInterfaceG12::SFC_PIPE_MODE_HCP)
@@ -576,7 +576,7 @@ MOS_STATUS MhwSfcInterfaceG12 :: SetSfcSamplerTable(
     }
 
     // Recalculate Horizontal scaling table
-    if (SrcFormat != pAvsParams->Format || fScaleX != pAvsParams->fScaleX)
+    if (SrcFormat != pAvsParams->Format || fScaleX != pAvsParams->fScaleX || pAvsParams->bUse8x8Filter != bUse8x8Filter)
     {
         MOS_ZeroMemory(
             piYCoefsX,
@@ -663,7 +663,7 @@ MOS_STATUS MhwSfcInterfaceG12 :: SetSfcSamplerTable(
     }
 
     // Recalculate Vertical scaling table
-    if (SrcFormat != pAvsParams->Format || fScaleY != pAvsParams->fScaleY)
+    if (SrcFormat != pAvsParams->Format || fScaleY != pAvsParams->fScaleY || pAvsParams->bUse8x8Filter != bUse8x8Filter)
     {
         memset((void *)piYCoefsY, 0, 8 * 32 * sizeof(int32_t));
 
@@ -746,6 +746,8 @@ MOS_STATUS MhwSfcInterfaceG12 :: SetSfcSamplerTable(
 
     // Save format used to calculate AVS parameters
     pAvsParams->Format = SrcFormat;
+    // Need to recaculate if use8x8Filter changed
+    pAvsParams->bUse8x8Filter = bUse8x8Filter;
 
     MhwSfcInterface::SetSfcAVSLumaTable(
         SrcFormat,

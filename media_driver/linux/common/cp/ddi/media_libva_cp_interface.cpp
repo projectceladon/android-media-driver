@@ -153,7 +153,8 @@ VAStatus DdiCpInterface::CreateCencDecode(
 }
 
 VAStatus DdiCpInterface::SetDecodeParams(
-    CodechalDecodeParams    *decodeParams)
+    DDI_DECODE_CONTEXT *ddiDecodeContext,
+    CodechalSetting *setting)
 {
     DdiStubMessage();
     return VA_STATUS_SUCCESS;
@@ -169,6 +170,12 @@ VAStatus DdiCpInterface::EndPicture(
     VADriverContextP    ctx,
     VAContextID         context
 )
+{
+    DdiStubMessage();
+    return VA_STATUS_SUCCESS;
+}
+
+VAStatus DdiCpInterface::IsAttachedSessionAlive()
 {
     DdiStubMessage();
     return VA_STATUS_SUCCESS;

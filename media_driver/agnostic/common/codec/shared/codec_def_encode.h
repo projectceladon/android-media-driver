@@ -44,9 +44,7 @@ struct CodechalEncodeSeiData
 struct MetaDataOffset
 {
     uint32_t dwEncodeErrorFlags                         = 0;
-    uint32_t dwReferencePicturesMotionResultsBitMask    = 0;
     uint32_t dwEncodedBitstreamWrittenBytesCount        = 0;
-    uint32_t dwReconstructedPictureWrittenBytesCount    = 0;
     uint32_t dwWrittenSubregionsCount                   = 0;
 
     uint32_t dwbSize        = 0;
@@ -164,6 +162,7 @@ struct EncoderParams
     bool                            fullHeaderInAppData;         //!< [JPEG]
     uint32_t                        uiOverallNALPayload;
     MetaDataOffset                  metaDataOffset;
+    void *                          pSliceHeaderParams;         //!< [HEVC]
 };
 
 #endif // !__CODEC_DEF_ENCODE_H__

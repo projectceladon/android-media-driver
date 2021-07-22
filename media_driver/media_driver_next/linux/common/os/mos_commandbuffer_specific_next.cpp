@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -89,7 +89,8 @@ MOS_STATUS CommandBufferSpecificNext::BindToGpuContext(GpuContextNext *gpuContex
     m_lockAddr = static_cast<uint8_t *>(m_graphicsResource->Lock(m_osContext, params));
     MOS_OS_CHK_NULL_RETURN(m_lockAddr);
 
-    m_gpuContext = gpuContext;
+    m_gpuContext        = gpuContext;
+    m_gpuContextHandle  = gpuContext->GetGpuContextHandle();
 
     m_readyToUse = true;
     return MOS_STATUS_SUCCESS;
@@ -141,7 +142,7 @@ void CommandBufferSpecificNext::waitReady()
     mos_bo_wait_rendering(cmdBufBo);
 }
 
-void CommandBufferSpecificNext::UnBindToGpuContext()
+void CommandBufferSpecificNext::UnBindToGpuContext(bool isNative)
 {
     MOS_OS_FUNCTION_ENTER;
 

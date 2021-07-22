@@ -76,7 +76,7 @@ namespace decode {
     class DecodeStatusReport : public MediaStatusReport
     {
     public:
-        DecodeStatusReport(DecodeAllocator *alloc, bool enableMfx, bool enableRcs);
+        DecodeStatusReport(DecodeAllocator *alloc, bool enableRcs);
         virtual ~DecodeStatusReport();
 
         //!
@@ -114,6 +114,24 @@ namespace decode {
         //!
         virtual MOS_STATUS Reset() override;
 
+        //!
+        //! \brief  Get Mfx status for frame specified by counter
+        //! \param  [in] counter
+        //!         The decode counter of requesting frame
+        //! \return DecodeStatusMfx
+        //!         The Mfx status specified by counter
+        //!
+        const DecodeStatusMfx& GetMfxStatus(uint32_t counter);
+
+        //!
+        //! \brief  Get report data for frame specified by counter
+        //! \param  [in] counter
+        //!         The decode counter of requesting frame
+        //! \return DecodeStatusReportData
+        //!         The report data specified by counter
+        //!
+        const DecodeStatusReportData& GetReportData(uint32_t counter);
+
     protected:
         //!
         //! \brief  Collect the status report information into report buffer.
@@ -150,25 +168,21 @@ namespace decode {
             DecodeStatusMfx* decodeStatus,
             bool completed);
 
-
     protected:
 
-        bool                   m_enableMfx = false;
         bool                   m_enableRcs = false;
         DecodeAllocator*       m_allocator = nullptr;  //!< Decode allocator
 
         DecodeStatusReportData m_statusReportData[m_statusNum] = {};
 
-
-        const uint32_t         m_statusBufSizeMfx = MOS_ALIGN_CEIL(sizeof(DecodeStatusMfx), sizeof(uint64_t));
-        const uint32_t         m_statusBufSizeRcs = MOS_ALIGN_CEIL(sizeof(DecodeStatusRcs), sizeof(uint64_t));
+        const uint32_t         m_completedCountSize = sizeof(uint32_t) * 2;
+        const uint32_t         m_statusBufSizeMfx   = MOS_ALIGN_CEIL(sizeof(DecodeStatusMfx), sizeof(uint64_t));
+        const uint32_t         m_statusBufSizeRcs   = MOS_ALIGN_CEIL(sizeof(DecodeStatusRcs), sizeof(uint64_t));
 
         PMOS_BUFFER            m_statusBufMfx = nullptr;
         PMOS_BUFFER            m_statusBufRcs = nullptr;
-        uint8_t*               m_dataStatusMfx = nullptr;
-        uint8_t                *m_dataStatusRcs = nullptr;
-
-        PMOS_BUFFER            m_decodeCompletedCountBuf = nullptr;
+        uint8_t               *m_dataStatusMfx = nullptr;
+        uint8_t               *m_dataStatusRcs = nullptr;
     };
 }
 

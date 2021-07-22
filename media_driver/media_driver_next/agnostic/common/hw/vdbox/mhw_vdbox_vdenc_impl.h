@@ -145,7 +145,9 @@ class Impl : public Itf
     _MHW_CMD_ALL_DEF_FOR_IMPL(VD_PIPELINE_FLUSH);
 
 public:
-    MOS_STATUS SetRowstoreCachingAddrs(const vdbox::RowStoreCacheParams &params) override;
+    MOS_STATUS EnableVdencRowstoreCacheIfSupported(uint32_t address) override;
+
+    MOS_STATUS EnableVdencRowIpdlstoreCacheIfSupported(uint32_t address) override;
 
     MOS_STATUS SetCacheabilitySettings(MHW_MEMORY_OBJECT_CONTROL_PARAMS settings[MOS_CODEC_RESOURCE_USAGE_END_CODEC]) override;
 
@@ -164,7 +166,6 @@ protected:
     PMOS_COMMAND_BUFFER m_currentCmdBuf   = nullptr;
     PMHW_BATCH_BUFFER   m_currentBatchBuf = nullptr;
 
-    bool                             m_rowstoreCachingSupported                                 = false;
     vdbox::RowStoreCache             m_vdencRowStoreCache                                       = {};
     vdbox::RowStoreCache             m_vdencIpdlRowstoreCache                                   = {};
     MHW_MEMORY_OBJECT_CONTROL_PARAMS m_cacheabilitySettings[MOS_CODEC_RESOURCE_USAGE_END_CODEC] = {};
@@ -230,6 +231,7 @@ protected:
         cmd->DW5.ParallelCaptureAndEncodeSessionId = params->wirelessSessionId;
         cmd->DW5.TailPointerReadFrequency          = params->tailPointerReadFrequency;
         cmd->DW5.QuantizationPrecisionOptimization = params->quantizationPrecision;
+        cmd->DW5.LatencyToleratePreFetchEnable     = params->latencyTolerate;
 
         return MOS_STATUS_SUCCESS;
     }
@@ -293,18 +295,21 @@ protected:
         cmd->Dwords25.DW2.YOffsetForUCb = params->uOffsetStage1;
         cmd->Dwords25.DW3.YOffsetForVCr = params->vOffsetStage1;
 
-        cmd->Dwords69.DW0.Width                       = params->widthStage2 - 1;
-        cmd->Dwords69.DW0.Height                      = params->heightStage2 - 1;
-        cmd->Dwords69.DW0.CrVCbUPixelOffsetVDirection = params->vDirectionStage2;
+        if (params->widthStage2 && params->heightStage2)
+        {
+            cmd->Dwords69.DW0.Width                       = params->widthStage2 - 1;
+            cmd->Dwords69.DW0.Height                      = params->heightStage2 - 1;
+            cmd->Dwords69.DW0.CrVCbUPixelOffsetVDirection = params->vDirectionStage2;
 
-        tileMode                        = GetHwTileType(params->tileTypeStage2, params->tileModeGmmStage2, params->gmmTileEnStage2);
-        cmd->Dwords69.DW1.TiledSurface  = (tileMode & 0x2) >> 1;
-        cmd->Dwords69.DW1.TileWalk      = tileMode & 0x1;
-        cmd->Dwords69.DW1.SurfaceFormat = cmd_t::VDENC_Surface_State_Fields_CMD::SURFACE_FORMAT_PLANAR_420_8;
-        cmd->Dwords69.DW1.SurfacePitch  = params->pitchStage2 - 1;
+            tileMode                        = GetHwTileType(params->tileTypeStage2, params->tileModeGmmStage2, params->gmmTileEnStage2);
+            cmd->Dwords69.DW1.TiledSurface  = (tileMode & 0x2) >> 1;
+            cmd->Dwords69.DW1.TileWalk      = tileMode & 0x1;
+            cmd->Dwords69.DW1.SurfaceFormat = cmd_t::VDENC_Surface_State_Fields_CMD::SURFACE_FORMAT_PLANAR_420_8;
+            cmd->Dwords69.DW1.SurfacePitch  = params->pitchStage2 - 1;
 
-        cmd->Dwords69.DW2.YOffsetForUCb = params->uOffsetStage2;
-        cmd->Dwords69.DW3.YOffsetForVCr = params->vOffsetStage2;
+            cmd->Dwords69.DW2.YOffsetForUCb = params->uOffsetStage2;
+            cmd->Dwords69.DW3.YOffsetForVCr = params->vOffsetStage2;
+        }
 
         return MOS_STATUS_SUCCESS;
     }
@@ -397,7 +402,7 @@ protected:
         }
 
         typename cmd_t::VDENC_Reference_Picture_CMD *fwdRefs[] =
-            {&cmd->FwdRef0, &cmd->FwdRef1, &cmd->FwdRef2};
+            {&cmd->FwdRef0, &cmd->FwdRef1, &cmd->FwdRef2, &cmd->BwdRef0};
         uint32_t fwdRefsDwLoaction[] =
             {_MHW_CMD_DW_LOCATION(FwdRef0), _MHW_CMD_DW_LOCATION(FwdRef1), _MHW_CMD_DW_LOCATION(FwdRef2)};
 
@@ -747,7 +752,7 @@ protected:
                 &resourceParams));
         }
 
-        if (this->m_vdencRowStoreCache.enabled)
+        if (this->m_vdencIpdlRowstoreCache.enabled)
         {
             cmd->IntraPredictionRowstoreBaseAddress.BufferPictureFields.DW0.CacheSelect = cmd_t::VDENC_Surface_Control_Bits_CMD::CACHE_SELECT_UNNAMED1;
             cmd->IntraPredictionRowstoreBaseAddress.LowerAddress.DW0.Value              = m_vdencIpdlRowstoreCache.dwAddress << 6;

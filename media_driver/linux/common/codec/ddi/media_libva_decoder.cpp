@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -119,6 +119,11 @@ VAStatus DdiDecode_BeginPicture (
     PDDI_DECODE_CONTEXT decCtx  = (PDDI_DECODE_CONTEXT)DdiMedia_GetContextFromContextID(ctx, context, &ctxType);
     DDI_CHK_NULL(decCtx,            "nullptr decCtx",            VA_STATUS_ERROR_INVALID_CONTEXT);
 
+    if (decCtx->pCpDdiInterface)
+    {
+        DDI_CHK_RET(decCtx->pCpDdiInterface->IsAttachedSessionAlive(), "Session not alive!");
+    }
+
     if (decCtx->m_ddiDecode)
     {
         VAStatus va = decCtx->m_ddiDecode->BeginPicture(ctx, context, renderTarget);
@@ -150,6 +155,19 @@ VAStatus DdiDecode_EndPicture (
     // assume the VAContextID is decoder ID
     PDDI_DECODE_CONTEXT decCtx     = (PDDI_DECODE_CONTEXT)DdiMedia_GetContextFromContextID(ctx, context, &ctxType);
     DDI_CHK_NULL(decCtx,            "nullptr decCtx",            VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    if (decCtx->pCpDdiInterface)
+    {
+        DDI_CHK_RET(decCtx->pCpDdiInterface->IsAttachedSessionAlive(), "Session not alive!");
+
+        if (decCtx->pCpDdiInterface->IsCencProcessing())
+        {
+            VAStatus va = decCtx->pCpDdiInterface->EndPicture(ctx, context);
+            DDI_FUNCTION_EXIT(va);
+            return va;
+        }
+    }
+
     if (decCtx->m_ddiDecode)
     {
         VAStatus va = decCtx->m_ddiDecode->EndPicture(ctx, context);
@@ -187,6 +205,11 @@ VAStatus DdiDecode_RenderPicture (
     uint32_t  ctxType;
     PDDI_DECODE_CONTEXT decCtx  = (PDDI_DECODE_CONTEXT)DdiMedia_GetContextFromContextID(ctx, context, &ctxType);
     DDI_CHK_NULL(decCtx,            "nullptr decCtx",            VA_STATUS_ERROR_INVALID_CONTEXT);
+
+    if (decCtx->pCpDdiInterface)
+    {
+        DDI_CHK_RET(decCtx->pCpDdiInterface->IsAttachedSessionAlive(), "Session not alive!");
+    }
 
     priorityIndexInBuffers = DdiMedia_GetGpuPriority(ctx, buffers, numOfBuffers, &updatePriority, &priority);
     if (priorityIndexInBuffers != -1)
@@ -325,7 +348,7 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
             }
             else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE || surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
             {
-                return VA_STATUS_ERROR_HW_BUSY;
+                return mediaCtx->bMediaResetEnable ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_HW_BUSY;
             }
         }
         else
@@ -398,7 +421,7 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, DecodePipelineAdapt
         }
         else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE || surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
         {
-            return VA_STATUS_ERROR_HW_BUSY;
+            return mediaCtx->bMediaResetEnable ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_HW_BUSY;
         }
     }
     else
@@ -598,6 +621,84 @@ VAStatus DdiDecode_CreateContext (
     return va;
 }
 
+
+//!
+//! \brief  Get ctx from VA buffer ID
+//!
+//! \param  [in] mediaCtx
+//!         pddi media context
+//! \param  [in] bufferID
+//!         VA Buffer ID
+//!
+//! \return void*
+//!     Pointer to buffer heap element context
+//!
+static void* DdiMedia_GetDecCtxFromVABufferID (PDDI_MEDIA_CONTEXT mediaCtx, VABufferID bufferID)
+{
+    DDI_CHK_NULL(mediaCtx, "nullptr mediaCtx", nullptr);
+
+    uint32_t i      = (uint32_t)bufferID;
+    DDI_CHK_LESS(i, mediaCtx->pBufferHeap->uiAllocatedHeapElements, "invalid buffer id", nullptr);
+    DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
+    PDDI_MEDIA_BUFFER_HEAP_ELEMENT bufHeapElement  = (PDDI_MEDIA_BUFFER_HEAP_ELEMENT)mediaCtx->pBufferHeap->pHeapBase;
+    bufHeapElement += i;
+    void *temp      = bufHeapElement->pCtx;
+    DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
+
+    return temp;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+//! \Free allocated bufferheap elements
+//! \params
+//! [in] VADriverContextP
+//! [out] none
+//! \returns
+/////////////////////////////////////////////////////////////////////////////
+static void DdiMedia_FreeBufferHeapElements(VADriverContextP    ctx, PDDI_DECODE_CONTEXT decCtx)
+{
+    PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
+    if (nullptr == mediaCtx)
+        return;
+
+    PDDI_MEDIA_HEAP  bufferHeap = mediaCtx->pBufferHeap;
+    if (nullptr == bufferHeap)
+        return;
+
+    PDDI_MEDIA_BUFFER_HEAP_ELEMENT mediaBufferHeapBase = (PDDI_MEDIA_BUFFER_HEAP_ELEMENT)bufferHeap->pHeapBase;
+    if (nullptr == mediaBufferHeapBase)
+        return;
+
+    int32_t bufNums = mediaCtx->uiNumBufs;
+    for (int32_t elementId = 0; bufNums > 0; ++elementId)
+    {
+        PDDI_MEDIA_BUFFER_HEAP_ELEMENT mediaBufferHeapElmt = &mediaBufferHeapBase[elementId];
+        if (nullptr == mediaBufferHeapElmt->pBuffer)
+            continue;
+
+        void *pDecContext =DdiMedia_GetDecCtxFromVABufferID(mediaCtx, mediaBufferHeapElmt->uiVaBufferID);
+        if(pDecContext == decCtx)
+        {
+            DDI_MEDIA_BUFFER   *buf     = DdiMedia_GetBufferFromVABufferID(mediaCtx,  mediaBufferHeapElmt->uiVaBufferID);
+
+            if (nullptr == buf)
+            {
+                return;
+            }
+
+            if(buf->uiType == VASliceDataBufferType ||
+                buf->uiType == VAProtectedSliceDataBufferType ||
+                buf->uiType == VASliceParameterBufferType)
+            {
+                DdiMedia_DestroyBuffer(ctx, mediaBufferHeapElmt->uiVaBufferID);
+            }
+        }
+        //Ensure the non-empty buffer to be destroyed.
+        --bufNums;
+    }
+}
+
 VAStatus DdiDecode_DestroyContext (
     VADriverContextP    ctx,
     VAContextID         context
@@ -616,6 +717,8 @@ VAStatus DdiDecode_DestroyContext (
     DdiMediaUtil_ReleasePVAContextFromHeap(mediaCtx->pDecoderCtxHeap, decIndex);
     mediaCtx->uiNumDecoders--;
     DdiMediaUtil_UnLockMutex(&mediaCtx->DecoderMutex);
+
+    DdiMedia_FreeBufferHeapElements(ctx, decCtx);
 
     if (decCtx->m_ddiDecode) {
     DdiDecodeCleanUp(ctx,decCtx);

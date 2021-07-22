@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -44,7 +44,7 @@ public:
     //! \param  [in] osInterface
     //!         Pointer to MOS_INTERFACE
     //!
-    VpAllocator(PMOS_INTERFACE osInterface, VPMediaMemComp *mmc);
+    VpAllocator(PMOS_INTERFACE osInterface, MediaMemComp *mmc);
 
     //!
     //! \brief  vpAllocator Destructor
@@ -189,12 +189,14 @@ public:
     //! \brief  Destroy Surface
     //! \param  [in] surface
     //!         Pointer to VP_SURFACE
+    //! \param  [in] deferredDestroyed
+    //!         Deferred destroy the resource until CleanRecycler being called.
     //! \param  [in] flags
     //!         flags for vp surface destroy
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    MOS_STATUS DestroyVpSurface(VP_SURFACE *&surface, MOS_GFXRES_FREE_FLAGS flags = {0});
+    MOS_STATUS DestroyVpSurface(VP_SURFACE *&surface, bool deferredDestroyed = false, MOS_GFXRES_FREE_FLAGS flags = {0});
 
     //!
     //! \brief  Allocate Surface
@@ -356,6 +358,8 @@ public:
     //!           true if allocated, false for not
     //! \param    [in] zeroOnAllocate
     //!           zero when surface allocated
+    //! \param    [in] deferredDestroyed
+    //!           Deferred destroy the resource until CleanRecycler being called.
     //! \param    [in] resUsageType
     //!           resource usage type for cache policy
     //! \return   MOS_STATUS
@@ -373,8 +377,56 @@ public:
         MOS_RESOURCE_MMC_MODE   compressionMode,
         bool                    &allocated,
         bool                    zeroOnAllocate = 0,
-        MOS_HW_RESOURCE_DEF     resUsageType   = MOS_HW_RESOURCE_DEF_MAX);
+        bool                    deferredDestroyed = false,
+        MOS_HW_RESOURCE_DEF     resUsageType   = MOS_HW_RESOURCE_DEF_MAX,
+        MOS_TILE_MODE_GMM       tileModeByForce = MOS_TILE_UNSET_GMM);
 
+    //!
+    //! \brief    Allocates the Surface
+    //! \details  Allocates the Surface
+    //!           - if the surface is not already allocated OR
+    //!           - resource dimenisions OR format changed
+    //! \param    [in,out] pSurface
+    //!           Pointer to VPHAL_SURFACE
+    //! \param    [in] pSurfaceName
+    //!           Pointer to surface name
+    //! \param    [in] Format
+    //!           Expected MOS_FORMAT
+    //! \param    [in] DefaultResType
+    //!           Expected Resource Type
+    //! \param    [in] DefaultTileType
+    //!           Expected Surface Tile Type
+    //! \param    [in] dwWidth
+    //!           Expected Surface Width
+    //! \param    [in] dwHeight
+    //!           Expected Surface Height
+    //! \param    [in] bCompressible
+    //!           Surface being compressible or not
+    //! \param    [in] CompressionMode
+    //!           Compression Mode
+    //! \param    [out] pbAllocated
+    //!           true if allocated, false for not
+    //! \param    [in] resUsageType
+    //!           resource usage type for caching
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success. Error code otherwise
+    //!
+    // for debug purpose
+#if (_DEBUG || _RELEASE_INTERNAL)
+    MOS_STATUS ReAllocateSurface(
+        PVPHAL_SURFACE        surface,                                   // [in/out]Pointer to surface
+        PCCHAR                surfaceName,                               // [in]    Pointer to surface name
+        MOS_FORMAT            format,                                    // [in]    Surface Format
+        MOS_GFXRES_TYPE       defaultResType,                            // [in]    Default Resource Type to use if resource has not be allocated yet
+        MOS_TILE_TYPE         defaultTileType,                           // [in]    Default Resource Tile Type to use if resource has not be allocated yet
+        uint32_t              width,                                     // [in]    Resource Width
+        uint32_t              height,                                    // [in]    Resource Height
+        bool                  compressible,                              // [in]    Flag indaicated reource is compressible or not
+        MOS_RESOURCE_MMC_MODE compressionMode,                           // [in]    Compression mode
+        bool *                allocated,                                 // [out]   Flag indicating new allocation
+        MOS_HW_RESOURCE_DEF   resUsageType    = MOS_HW_RESOURCE_DEF_MAX, // [in]    resource usage type
+        MOS_TILE_MODE_GMM     tileModeByForce = MOS_TILE_UNSET_GMM);     // [in]    Flag to indicate if GMM flag tile64 need set
+#endif
     //!
     //! \brief    Unified OS fill Resource
     //! \details  Locks the surface and fills the resource with data
@@ -505,7 +557,8 @@ public:
     //! \return   bool
     //!           true if success, otherwise failed reason
     //!
-    bool isSyncFreeNeededForMMCSurface(PMOS_SURFACE pOsSurface);
+    bool IsSyncFreeNeededForMMCSurface(PMOS_SURFACE pOsSurface);
+    void CleanRecycler();
 
 protected:
     //!
@@ -516,6 +569,7 @@ protected:
     //! \return   MOS_STATUS
     //!
     MOS_STATUS SetMmcFlags(MOS_SURFACE &osSurface);
+
     //!
     //! \brief    Update surface plane offset
     //! \details  Update surface plane offset with render offset
@@ -527,7 +581,8 @@ protected:
 
     PMOS_INTERFACE  m_osInterface   = nullptr;
     Allocator       *m_allocator    = nullptr;
-    VPMediaMemComp  *m_mmc          = nullptr;
+    MediaMemComp    *m_mmc          = nullptr;
+    std::vector<VP_SURFACE *> m_recycler;   // Container for delayed destroyed surface.
 };
 
 typedef VpAllocator* PVpAllocator;

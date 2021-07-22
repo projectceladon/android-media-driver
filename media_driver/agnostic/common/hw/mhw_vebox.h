@@ -759,6 +759,7 @@ typedef struct _MHW_VEBOX_SURFACE_STATE_CMD_PARAMS
     MHW_VEBOX_SURFACE_PARAMS         SurfDNOutput;
     MHW_VEBOX_SURFACE_PARAMS         SurfSkinScoreOutput;
     bool                             bDIEnable;
+    bool                             b3DlutEnable;
     bool                             bOutputValid;
 } MHW_VEBOX_SURFACE_STATE_CMD_PARAMS, *PMHW_VEBOX_SURFACE_STATE_CMD_PARAMS;
 
@@ -1160,6 +1161,28 @@ public:
     //! \return   MOS_STATUS
     //!
     MOS_STATUS UpdateVeboxSync();
+
+    //!
+    //! \brief    Set which vebox can be used by HW
+    //! \details  VPHAL set which VEBOX can be use by HW
+    //! \param    [in] dwVeboxIndex
+    //!           set which Vebox can be used by HW
+    //! \param    [in] dwVeboxCount
+    //!           set Vebox Count
+    //! \param    [in] dwUsingSFC
+    //!           set whether using SFC
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    virtual MOS_STATUS SetVeboxIndex(
+        uint32_t dwVeboxIndex,
+        uint32_t dwVeboxCount,
+        uint32_t dwUsingSFC)
+    {
+        MOS_UNUSED(dwVeboxIndex);
+        MOS_UNUSED(dwVeboxCount);
+        MOS_UNUSED(dwUsingSFC);
+        return MOS_STATUS_SUCCESS;
+    }
 
 private:
     //!

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2018, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -143,7 +143,7 @@ MOS_STATUS VphalState::Allocate(
     VPHAL_RENDER_CHK_STATUS(CreateRenderer());
 
     // Allocate and initialize renderer states
-    VPHAL_PUBLIC_CHK_STATUS(m_renderer->Initialize(pVpHalSettings));
+    VPHAL_PUBLIC_CHK_STATUS(m_renderer->Initialize(pVpHalSettings, IsApoEnabled()));
 
 finish:
     return eStatus;
@@ -163,7 +163,7 @@ static bool IsSurfNeedAvs(
     VPHAL_PUBLIC_CHK_NULL_NO_STATUS(pSurf);
 
     // Not perform AVS for surface with alpha channel.
-    if (pSurf->Format == Format_AYUV || pSurf->Format == Format_AUYV)
+    if (IS_ALPHA_YUV_FORMAT(pSurf->Format))
     {
         return false;
     }

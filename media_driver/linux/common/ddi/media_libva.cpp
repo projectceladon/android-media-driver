@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -115,22 +115,6 @@ VAStatus DdiMedia_MapBuffer (
 VAStatus DdiMedia_UnmapBuffer (
     VADriverContextP    ctx,
     VABufferID          buf_id    /* in */
-);
-
-//!
-//! \brief  Destroy buffer 
-//! 
-//! \param  [in] ctx
-//!         Pointer to VA driver context
-//! \param  [in] buffer_id
-//!         VA buffer ID
-//!
-//! \return     VAStatus
-//!     VA_STATUS_SUCCESS if success, else fail reason
-//!
-VAStatus DdiMedia_DestroyBuffer (
-    VADriverContextP    ctx,
-    VABufferID          buffer_id
 );
 
 VAStatus DdiMedia_DestroyImage (
@@ -1961,6 +1945,11 @@ VAStatus DdiMedia__Initialize (
     output_dri_init(ctx);
 #endif
 
+    if (VA_STATUS_SUCCESS != DdiMediaUtil_SetMediaResetEnableFlag(mediaCtx))
+    {
+        mediaCtx->bMediaResetEnable = false;
+    }
+
     DdiMediaUtil_UnLockMutex(&GlobalMutex);
 
     return VA_STATUS_SUCCESS;
@@ -3055,6 +3044,9 @@ static VAStatus DdiMedia_CreateBuffer (
         case DDI_MEDIA_CONTEXT_TYPE_VP:
             va = DdiVp_CreateBuffer(ctx, ctxPtr, type, size, num_elements, data, bufId);
             break;
+        case DDI_MEDIA_CONTEXT_TYPE_PROTECTED:
+            va = DdiMediaProtected::DdiMedia_ProtectedSessionCreateBuffer(ctx, context, type, size, num_elements, data, bufId);
+            break;
         default:
             va = VA_STATUS_ERROR_INVALID_CONTEXT;
     }
@@ -3159,6 +3151,7 @@ VAStatus DdiMedia_MapBufferInternal (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_VP:
+        case DDI_MEDIA_CONTEXT_TYPE_PROTECTED:
             break;
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
             ctxPtr = DdiMedia_GetCtxFromVABufferID(mediaCtx, buf_id);
@@ -3447,6 +3440,7 @@ VAStatus DdiMedia_UnmapBuffer (
     switch (ctxType)
     {
         case DDI_MEDIA_CONTEXT_TYPE_VP:
+        case DDI_MEDIA_CONTEXT_TYPE_PROTECTED:
             break;
         case DDI_MEDIA_CONTEXT_TYPE_DECODER:
             ctxPtr = DdiMedia_GetCtxFromVABufferID(mediaCtx, buf_id);
@@ -3559,6 +3553,8 @@ VAStatus DdiMedia_DestroyBuffer (
         case DDI_MEDIA_CONTEXT_TYPE_VP:
             break;
         case DDI_MEDIA_CONTEXT_TYPE_MEDIA:
+            break;
+        case DDI_MEDIA_CONTEXT_TYPE_PROTECTED:
             break;
         default:
             return VA_STATUS_ERROR_INVALID_BUFFER;
@@ -3928,7 +3924,7 @@ static VAStatus DdiMedia_StatusCheck (
             }
             else if(surface->curStatusReport.vpp.status == VPREP_NOTREADY)
             {
-                return VA_STATUS_ERROR_HW_BUSY;
+                return mediaCtx->bMediaResetEnable ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_HW_BUSY;
             }
             else
             {
@@ -6002,6 +5998,150 @@ DdiMedia_CopyInternal(
     return vaStatus;
 }
 
+#if VA_CHECK_VERSION(1,10,0)
+//!
+//! \brief  media copy
+//!
+//! \param  [in] ctx
+//!         Pointer to VA driver context
+//! \param  [in] dst_obj
+//!         VA copy object dst.
+//! \param  [in] src_obj
+//!         VA copy object src.
+//! \param  [in] option
+//!         VA copy option, copy mode.
+//! \param  [in] sync_handle
+//!         VA copy sync handle
+//!
+//! \return VAStatus
+//!     VA_STATUS_SUCCESS if success, else fail reason
+//!
+VAStatus
+DdiMedia_Copy(
+    VADriverContextP    ctx,
+    VACopyObject       *dst_obj,
+    VACopyObject       *src_obj,
+    VACopyOption       option
+)
+{
+    VAStatus vaStatus = VA_STATUS_SUCCESS;
+    MOS_CONTEXT  mosCtx;
+    MOS_RESOURCE src, dst;
+    DdiCpInterface *pCpDdiInterface = nullptr;
+    PDDI_MEDIA_SURFACE src_surface = nullptr;
+    PDDI_MEDIA_SURFACE dst_surface = nullptr;
+    PDDI_MEDIA_BUFFER src_buffer = nullptr;
+    PDDI_MEDIA_BUFFER dst_buffer = nullptr;
+
+    DDI_FUNCTION_ENTER();
+
+    DDI_CHK_NULL(ctx, "nullptr ctx", VA_STATUS_ERROR_INVALID_CONTEXT);
+    PDDI_MEDIA_CONTEXT mediaCtx   = DdiMedia_GetMediaContext(ctx);
+
+    DDI_CHK_NULL(mediaCtx,               "nullptr mediaCtx",               VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(mediaCtx->pBufferHeap,  "nullptr mediaCtx->pBufferHeap",  VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(mediaCtx->pSurfaceHeap, "nullptr mediaCtx->pSurfaceHeap", VA_STATUS_ERROR_INVALID_CONTEXT);
+    DDI_CHK_NULL(dst_obj, "nullptr copy dst", VA_STATUS_ERROR_INVALID_SURFACE);
+    DDI_CHK_NULL(src_obj, "nullptr copy src", VA_STATUS_ERROR_INVALID_SURFACE);
+
+    if (dst_obj->obj_type == VACopyObjectSurface)
+    {
+        DDI_CHK_LESS((uint32_t)dst_obj->object.surface_id, mediaCtx->pSurfaceHeap->uiAllocatedHeapElements, "copy_dst", VA_STATUS_ERROR_INVALID_SURFACE);
+        dst_surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, dst_obj->object.surface_id);
+        DDI_CHK_NULL(dst_surface, "nullptr surface", VA_STATUS_ERROR_INVALID_SURFACE);
+        DDI_CHK_NULL(dst_surface->pGmmResourceInfo, "nullptr dst_surface->pGmmResourceInfo", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+        MOS_ZeroMemory(&dst, sizeof(dst));
+        DdiMedia_MediaSurfaceToMosResource(dst_surface, &dst);
+    }
+    else if (dst_obj->obj_type == VACopyObjectBuffer)
+    {
+        DDI_CHK_LESS((uint32_t)dst_obj->object.buffer_id, mediaCtx->pBufferHeap->uiAllocatedHeapElements, "Invalid copy dst buf_id", VA_STATUS_ERROR_INVALID_BUFFER);
+        dst_buffer = DdiMedia_GetBufferFromVABufferID(mediaCtx, dst_obj->object.buffer_id);
+        DDI_CHK_NULL(dst_buffer, "nullptr buffer", VA_STATUS_ERROR_INVALID_BUFFER);
+        DDI_CHK_NULL(dst_buffer->pGmmResourceInfo, "nullptr dst_buffer->pGmmResourceInfo", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+        MOS_ZeroMemory(&dst, sizeof(dst));
+        DdiMedia_MediaBufferToMosResource(dst_buffer, &dst);
+    }
+    else
+    {
+        DDI_ASSERTMESSAGE("DDI: unsupported src copy object in DdiMedia_copy.");
+    }
+
+    if (src_obj->obj_type == VACopyObjectSurface)
+    {
+        DDI_CHK_LESS((uint32_t)src_obj->object.surface_id, mediaCtx->pSurfaceHeap->uiAllocatedHeapElements, "copy_src", VA_STATUS_ERROR_INVALID_SURFACE);
+        src_surface = DdiMedia_GetSurfaceFromVASurfaceID(mediaCtx, src_obj->object.surface_id);
+        DDI_CHK_NULL(src_surface, "nullptr surface", VA_STATUS_ERROR_INVALID_SURFACE);
+        DDI_CHK_NULL(src_surface->pGmmResourceInfo, "nullptr src_surface->pGmmResourceInfo", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+        MOS_ZeroMemory(&src, sizeof(src));
+        DdiMedia_MediaSurfaceToMosResource(src_surface, &src);
+    }
+    else if (src_obj->obj_type == VACopyObjectBuffer)
+    {
+        DDI_CHK_LESS((uint32_t)src_obj->object.buffer_id, mediaCtx->pBufferHeap->uiAllocatedHeapElements, "Invalid copy dst buf_id", VA_STATUS_ERROR_INVALID_BUFFER);
+        src_buffer = DdiMedia_GetBufferFromVABufferID(mediaCtx, src_obj->object.buffer_id);
+        DDI_CHK_NULL(src_buffer, "nullptr buffer", VA_STATUS_ERROR_INVALID_BUFFER);
+        DDI_CHK_NULL(src_buffer->pGmmResourceInfo, "nullptr src_buffer->pGmmResourceInfo", VA_STATUS_ERROR_INVALID_PARAMETER);
+
+        MOS_ZeroMemory(&src, sizeof(src));
+        DdiMedia_MediaBufferToMosResource(src_buffer, &src);
+    }
+    else
+    {
+        DDI_ASSERTMESSAGE("DDI: unsupported dst copy object in DdiMedia_copy.");
+    }
+
+    MOS_ZeroMemory(&mosCtx, sizeof(mosCtx));
+
+    mosCtx.bufmgr          = mediaCtx->pDrmBufMgr;
+    mosCtx.m_gpuContextMgr = mediaCtx->m_gpuContextMgr;
+    mosCtx.m_cmdBufMgr     = mediaCtx->m_cmdBufMgr;
+    mosCtx.fd              = mediaCtx->fd;
+    mosCtx.iDeviceId       = mediaCtx->iDeviceId;
+    mosCtx.SkuTable        = mediaCtx->SkuTable;
+    mosCtx.WaTable         = mediaCtx->WaTable;
+    mosCtx.gtSystemInfo    = *mediaCtx->pGtSystemInfo;
+    mosCtx.platform        = mediaCtx->platform;
+
+    mosCtx.ppMediaCopyState      = &mediaCtx->pMediaCopyState;
+    mosCtx.gtSystemInfo          = *mediaCtx->pGtSystemInfo;
+    mosCtx.m_auxTableMgr         = mediaCtx->m_auxTableMgr;
+    mosCtx.pGmmClientContext     = mediaCtx->pGmmClientContext;
+
+    mosCtx.m_osDeviceContext     = mediaCtx->m_osDeviceContext;
+    mosCtx.m_apoMosEnabled       = mediaCtx->m_apoMosEnabled;
+
+    pCpDdiInterface = Create_DdiCpInterface(mosCtx);
+
+    if (nullptr == pCpDdiInterface)
+    {
+        return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    }
+
+    vaStatus = DdiMedia_CopyInternal(&mosCtx, &src, &dst, option.bits.va_copy_mode);
+
+    if ((option.bits.va_copy_sync == VA_EXEC_SYNC) && dst_surface)
+    {
+        uint32_t timeout_NS = 100000000;
+        while (0 != mos_gem_bo_wait(dst_surface->bo, timeout_NS))
+        {
+            // Just loop while gem_bo_wait times-out.
+        }
+    }
+
+    if (pCpDdiInterface)
+    {
+        Delete_DdiCpInterface(pCpDdiInterface);
+        pCpDdiInterface = NULL;
+    }
+
+    return vaStatus;
+}
+#endif
+
 //!
 //! \brief  Check for buffer info
 //! 
@@ -6679,6 +6819,8 @@ static uint32_t DdiMedia_GetDrmFormatOfSeparatePlane(uint32_t fourcc, int plane)
             return DRM_FORMAT_VYUY;
         case VA_FOURCC_UYVY:
             return DRM_FORMAT_UYVY;
+        case VA_FOURCC_AYUV:
+            return DRM_FORMAT_AYUV;
         case VA_FOURCC_Y210:
             return DRM_FORMAT_Y210;
         case VA_FOURCC_Y216:
@@ -7130,6 +7272,11 @@ VAStatus __vaDriverInit(VADriverContextP ctx )
     struct VADriverVTableVPP *pVTableVpp  = DDI_CODEC_GET_VTABLE_VPP(ctx);
     DDI_CHK_NULL(pVTableVpp,  "nullptr pVTableVpp",   VA_STATUS_ERROR_INVALID_CONTEXT);
 
+#if VA_CHECK_VERSION(1,11,0)
+    struct VADriverVTableProt *pVTableProt = DDI_CODEC_GET_VTABLE_PROT(ctx);
+    DDI_CHK_NULL(pVTableProt,  "nullptr pVTableProt",   VA_STATUS_ERROR_INVALID_CONTEXT);
+#endif
+
     ctx->pDriverData                         = nullptr;
     ctx->version_major                       = VA_MAJOR_VERSION;
     ctx->version_minor                       = VA_MINOR_VERSION;
@@ -7192,6 +7339,9 @@ VAStatus __vaDriverInit(VADriverContextP ctx )
     pVTable->vaGetDisplayAttributes          = DdiMedia_GetDisplayAttributes;
     pVTable->vaSetDisplayAttributes          = DdiMedia_SetDisplayAttributes;
     pVTable->vaQueryProcessingRate           = DdiMedia_QueryProcessingRate;
+#if VA_CHECK_VERSION(1,10,0)
+    pVTable->vaCopy                          = DdiMedia_Copy;
+#endif
 
     // vaTrace
     pVTable->vaBufferInfo                    = DdiMedia_BufferInfo;
@@ -7201,6 +7351,14 @@ VAStatus __vaDriverInit(VADriverContextP ctx )
     pVTableVpp->vaQueryVideoProcFilters      = DdiMedia_QueryVideoProcFilters;
     pVTableVpp->vaQueryVideoProcFilterCaps   = DdiMedia_QueryVideoProcFilterCaps;
     pVTableVpp->vaQueryVideoProcPipelineCaps = DdiMedia_QueryVideoProcPipelineCaps;
+
+#if VA_CHECK_VERSION(1,11,0)
+    pVTableProt->vaCreateProtectedSession    = DdiMediaProtected::DdiMedia_CreateProtectedSession;
+    pVTableProt->vaDestroyProtectedSession   = DdiMediaProtected::DdiMedia_DestroyProtectedSession;
+    pVTableProt->vaAttachProtectedSession    = DdiMediaProtected::DdiMedia_AttachProtectedSession;
+    pVTableProt->vaDetachProtectedSession    = DdiMediaProtected::DdiMedia_DetachProtectedSession;
+    pVTableProt->vaProtectedSessionExecute   = DdiMediaProtected::DdiMedia_ProtectedSessionExecute;
+#endif
 
     //pVTable->vaSetSurfaceAttributes          = DdiMedia_SetSurfaceAttributes;
     pVTable->vaGetSurfaceAttributes          = DdiMedia_GetSurfaceAttributes;

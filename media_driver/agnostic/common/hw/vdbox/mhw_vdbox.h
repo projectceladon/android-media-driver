@@ -240,6 +240,8 @@ struct MHW_VDBOX_PIPE_MODE_SELECT_PARAMS
     PMHW_BATCH_BUFFER           pBatchBuffer = nullptr;
     uint32_t                    ChromaType = 0;
     MOS_FORMAT                  Format = {};
+    bool                        isIFrame = false;
+    bool                        bIBCEnabled = false;
 
     // HuC specific
     uint32_t                    dwMediaSoftResetCounterValue = 0;
@@ -348,6 +350,9 @@ struct MHW_VDBOX_PIPE_BUF_ADDR_PARAMS
     uint32_t                    dwVdencStatsStreamOutOffset = 0;
     bool                        oneOnOneMapping = false;                 // Flag for indicating using 1:1 ref index mapping for vdenc
     bool                        isLowDelayB = true;                      // Flag to indicate if it is LDB
+    bool                        isIFrame    = false;                     // Flag to indicate if it is I frame
+    bool                        isPFrame    = false;                     // Flag to indicate if it is P frame
+    bool                        bIBCEnabled = false;
     uint8_t                     IBCRefIdxMask = 0;
     PMOS_RESOURCE               presVdencCumulativeCuCountStreamoutSurface = nullptr;
     virtual ~MHW_VDBOX_PIPE_BUF_ADDR_PARAMS() {}
@@ -521,6 +526,14 @@ struct MHW_VDBOX_STATE_CMDSIZE_PARAMS
     bool       bShortFormat = false;
     bool       bHucDummyStream = false;
     bool       bSfcInUse = false;
+    uint32_t   uNumStoreDataImm = 0;
+    uint32_t   uNumStoreReg = 0;
+    uint32_t   uNumMfxWait = 0;
+    uint32_t   uNumAddConBBEnd = 0;
+    uint32_t   uNumMiCopy = 0;
+    uint32_t   uNumMiFlush = 0;
+    uint32_t   bPerformHucStreamOut = false;
+    uint32_t   uNumVdPipelineFlush = 0;
     virtual ~MHW_VDBOX_STATE_CMDSIZE_PARAMS() {}
 };
 using PMHW_VDBOX_STATE_CMDSIZE_PARAMS = MHW_VDBOX_STATE_CMDSIZE_PARAMS * ;

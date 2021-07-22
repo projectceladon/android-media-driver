@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -267,9 +267,12 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
         return MOS_STATUS_SUCCESS;
     }
 
-    // for now, Temp removed ARGB input for APG
-    if (pvpParams->pSrc[0]->Format == Format_A8R8G8B8 ||
-        pvpParams->pSrc[0]->Format == Format_X8R8G8B8)
+    // Temp removed RGB input with DN/DI/IECP case
+    if ((IS_RGB_FORMAT(pvpParams->pSrc[0]->Format)) &&
+        (pvpParams->pSrc[0]->pDenoiseParams         ||
+        pvpParams->pSrc[0]->pDeinterlaceParams      ||
+        pvpParams->pSrc[0]->pProcampParams          ||
+        pvpParams->pSrc[0]->pColorPipeParams))
     {
         return MOS_STATUS_SUCCESS;
     }
@@ -301,6 +304,25 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
     if (pvpParams->pSrc[0]->ScalingPreference == VPHAL_SCALING_PREFER_COMP)
     {
         VP_PUBLIC_NORMALMESSAGE("DDI choose to use Composition, change to Composition.");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    // check video procressing settings
+    uint32_t kernelUpdate = 0;
+
+    if (m_hwInterface->m_settings)
+    {
+        VP_SETTINGS* settings = (VP_SETTINGS*)m_hwInterface->m_settings;
+
+        kernelUpdate = settings->kernelUpdate;
+    }
+
+    bool bKernelDnUpdate =
+        (kernelUpdate & VP_VEBOX_FLAG_ENABLE_KERNEL_DN_UPDATE);
+
+    // Will remove when Enable Secure Copy for Vebox
+    if (bKernelDnUpdate)
+    {
         return MOS_STATUS_SUCCESS;
     }
 
@@ -460,8 +482,11 @@ finish:
 }
 bool VPFeatureManager::IsVeboxInputFormatSupport(PVPHAL_SURFACE pSrcSurface)
 {
-    bool    bRet = false;
-    VPHAL_RENDER_CHK_NULL_NO_STATUS(pSrcSurface);
+    if (nullptr == pSrcSurface)
+    {
+        VP_PUBLIC_ASSERTMESSAGE("nullptr == pSrcSurface");
+        return false;
+    }
 
     // Check if Sample Format is supported
     // Vebox only support P016 format, P010 format can be supported by faking it as P016
@@ -474,17 +499,18 @@ bool VPFeatureManager::IsVeboxInputFormatSupport(PVPHAL_SURFACE pSrcSurface)
         pSrcSurface->Format != Format_Y8 &&
         pSrcSurface->Format != Format_Y16U &&
         pSrcSurface->Format != Format_Y16S &&
-        !IS_PA_FORMAT(pSrcSurface->Format)/* &&
+        !IS_PA_FORMAT(pSrcSurface->Format) &&
+        (pSrcSurface->Format != Format_A8B8G8R8) &&
+        (pSrcSurface->Format != Format_X8B8G8R8) &&
+        (pSrcSurface->Format != Format_A8R8G8B8) &&
+        (pSrcSurface->Format != Format_X8R8G8B8)/* &&
         !IS_RGB64_FLOAT_FORMAT(pSrcSurface->Format)*/)
     {
-        VPHAL_RENDER_NORMALMESSAGE("Unsupported Source Format '0x%08x' for VEBOX.", pSrcSurface->Format);
-        goto finish;
+        VP_PUBLIC_NORMALMESSAGE("Unsupported Source Format '0x%08x' for VEBOX.", pSrcSurface->Format);
+        return false;
     }
 
-    bRet = true;
-
-finish:
-    return bRet;
+    return true;
 }
 bool VPFeatureManager::IsVeboxRTFormatSupport(
     PVPHAL_SURFACE pSrcSurface,
@@ -560,7 +586,9 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
     uint32_t                    dwOutputRegionHeight = 0;
     bool                        bRet = false;
     float                       fScaleX = 0.0f, fScaleY = 0.0f;
+    float                       minRatio = 0.125f, maxRatio = 8.0f;
     bool                        disableSFC = false;
+    VP_POLICY_RULES             rules = {};
 
     VPHAL_RENDER_CHK_NULL_NO_STATUS(params);
     VPHAL_RENDER_CHK_NULL_NO_STATUS(params->pTarget[0]);
@@ -694,13 +722,21 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
         fScaleY = (float)dwOutputRegionWidth / (float)dwSourceRegionHeight;
     }
 
+    m_hwInterface->m_vpPlatformInterface->InitPolicyRules(rules);
+
+    if (rules.sfcMultiPassSupport.scaling.enable)
+    {
+        minRatio *= rules.sfcMultiPassSupport.scaling.downScaling.minRatioEnlarged;
+        maxRatio *= rules.sfcMultiPassSupport.scaling.upScaling.maxRatioEnlarged;
+    }
+
     // SFC scaling range is [0.125, 8] for both X and Y direction.
-    if ((fScaleX < 0.125F) || (fScaleX > 8.0F) ||
-        (fScaleY < 0.125F) || (fScaleY > 8.0F))
+    if ((fScaleX < minRatio) || (fScaleX > maxRatio) ||
+        (fScaleY < minRatio) || (fScaleY > maxRatio))
     {
         VPHAL_RENDER_NORMALMESSAGE("Scaling factor not supported by SFC Pipe.");
-            bRet = false;
-            return bRet;
+        bRet = false;
+        return bRet;
     }
 
     // Check if the input/output combination is supported, given certain alpha fill mode.
@@ -757,9 +793,11 @@ bool VPFeatureManager::IsOutputFormatSupported(PVPHAL_SURFACE outSurface)
         outSurface->Format != Format_Y216 &&
         outSurface->Format != Format_Y416)
     {
-        if (outSurface->TileType == MOS_TILE_Y    &&
-            (outSurface->Format == Format_P010    ||
-             outSurface->Format == Format_P016    ||
+        if ((outSurface->TileType == MOS_TILE_Y ||
+             (MEDIA_IS_SKU(m_hwInterface->m_skuTable, FtrSFCLinearOutputSupport) &&
+              outSurface->TileType == MOS_TILE_LINEAR))                          && 
+            (outSurface->Format == Format_P010  ||
+             outSurface->Format == Format_P016  ||
              outSurface->Format == Format_NV12))
         {
             ret = true;

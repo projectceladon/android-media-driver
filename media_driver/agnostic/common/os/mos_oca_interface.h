@@ -1,5 +1,5 @@
 ﻿/*
-* Copyright (c) 2009-2019, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -193,6 +193,28 @@ public:
     //!         Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
     virtual MOS_STATUS TraceMessage(MOS_OCA_BUFFER_HANDLE hOcaBuf, PMOS_CONTEXT mosCtx, const char *str, uint32_t maxCount)
+    {
+        return MOS_STATUS_UNIMPLEMENTED;
+    }
+
+    //!
+    //! \brief  Add resource to dump list.
+    //! \param  [in] hOcaBuf
+    //!         Oca buffer handle.
+    //! \param  [in] mosCtx
+    //!         DDI device context.
+    //! \param  [in] resource
+    //!         Reference to MOS_RESOURCE.
+    //! \param  [in] hwCmdType
+    //!         Hw command Type.
+    //! \param  [in] locationInCmd
+    //!         Location in command.
+    //! \param  [in] offsetInRes
+    //!         Offset in resource.
+    //! \return MOS_STATUS
+    //!         Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS AddResourceToDumpList(MOS_OCA_BUFFER_HANDLE hOcaBuf, PMOS_CONTEXT mosCtx, MOS_RESOURCE &resource, MOS_HW_COMMAND hwCmdType, uint32_t locationInCmd, uint32_t offsetInRes)
     {
         return MOS_STATUS_UNIMPLEMENTED;
     }

@@ -1,5 +1,5 @@
 ﻿/*
-* Copyright (c) 2019, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -242,6 +242,11 @@ public:
         return &m_bufAttriVe;
     }
 
+    virtual MOS_STATUS ResetCmdBuffer()
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
 protected:
     //! \brief    Hardware node for current gpu context
     MOS_GPU_NODE m_nodeOrdinal;
@@ -251,6 +256,9 @@ protected:
 
     //! \brief    Related command buffer manager
     CmdBufMgrNext *m_cmdBufMgr = nullptr;
+
+    //! \brief    Related command buffer manager
+    uint64_t      m_cmdBufMgrHandle = UINT64_MAX;
 
     //! \brief    Index in gpucontextNext mgr pool for current gpu context
     GPU_CONTEXT_HANDLE m_gpuContextHandle = 0;

@@ -34,6 +34,7 @@
 #define CODEC_MAX_NUM_REF_FRAME             16
 #define CODEC_MAX_NUM_REF_FRAME_NON_AVC     4
 #define CODEC_NUM_FIELDS_PER_FRAME          2
+#define CODEC_MAX_NUM_REF_RECYCLE_LIST      17
 
 #define CODEC_NUM_BLOCK_PER_MB              6  //!<  Block number per MB: 4Y + Cb +Cr
 
@@ -368,6 +369,14 @@ typedef enum _CODECHAL_STATUS
     CODECHAL_STATUS_ERROR       = 2,
     CODECHAL_STATUS_UNAVAILABLE = 3     //!< Indicates that the entry in the status reporting array was not used
 } CODECHAL_STATUS, *PCODECHAL_STATUS;
+
+typedef enum _CODECHAL_SCALING_MODE
+{
+    CODECHAL_SCALING_NEAREST = 0,
+    CODECHAL_SCALING_BILINEAR,
+    CODECHAL_SCALING_AVS,
+    CODECHAL_SCALING_ADV_QUALITY        // !< Advance Perf mode
+} CODECHAL_SCALING_MODE;
 
 typedef enum _CODECHAL_CHROMA_SITING_TYPE
 {

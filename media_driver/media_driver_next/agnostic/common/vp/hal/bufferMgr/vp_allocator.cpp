@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -31,7 +31,7 @@
 
 using namespace vp;
 
-VpAllocator::VpAllocator(PMOS_INTERFACE osInterface, VPMediaMemComp *mmc) :
+VpAllocator::VpAllocator(PMOS_INTERFACE osInterface, MediaMemComp *mmc) :
     m_osInterface(osInterface),
     m_mmc(mmc)
 {
@@ -422,7 +422,7 @@ MOS_STATUS VpAllocator::CopyVpSurface(VP_SURFACE &dst, VP_SURFACE &src)
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS VpAllocator::DestroyVpSurface(VP_SURFACE* &surface, MOS_GFXRES_FREE_FLAGS flags)
+MOS_STATUS VpAllocator::DestroyVpSurface(VP_SURFACE* &surface, bool deferredDestroyed, MOS_GFXRES_FREE_FLAGS flags)
 {
     MOS_STATUS status = MOS_STATUS_SUCCESS;
     if (nullptr == surface)
@@ -434,7 +434,15 @@ MOS_STATUS VpAllocator::DestroyVpSurface(VP_SURFACE* &surface, MOS_GFXRES_FREE_F
     {
         // VP_SURFACE should always be allocated by interface in VpAllocator,
         // which will ensure nullptr != surface->osSurface.
-        VP_PUBLIC_CHK_STATUS_RETURN(MOS_STATUS_INVALID_PARAMETER);
+        VP_PUBLIC_NORMALMESSAGE("Surfaces already been deleted, return status!");
+        return status;
+    }
+
+    if (deferredDestroyed)
+    {
+        m_recycler.push_back(surface);
+        surface = nullptr;
+        return MOS_STATUS_SUCCESS;
     }
 
     if (surface->isResourceOwner)
@@ -607,7 +615,7 @@ MOS_STATUS VpAllocator::AllocParamsInitType(
 {
     VP_PUBLIC_CHK_NULL_RETURN(surface);
 
-#if !EMUL && !LINUX
+#if !EMUL && !LINUX && !ANDROID
     //  Need to reallocate surface according to expected tiletype instead of tiletype of the surface what we have
     if ( surface                           != nullptr &&
          surface->OsResource.pGmmResInfo   != nullptr &&
@@ -666,7 +674,9 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
         MOS_RESOURCE_MMC_MODE   compressionMode,
         bool                    &allocated,
         bool                    zeroOnAllocate,
-        MOS_HW_RESOURCE_DEF     resUsageType)
+        bool                    deferredDestroyed,
+        MOS_HW_RESOURCE_DEF     resUsageType,
+        MOS_TILE_MODE_GMM       tileModeByForce)
 {
     MOS_STATUS              eStatus = MOS_STATUS_SUCCESS;
     MOS_ALLOC_GFXRES_PARAMS allocParams = {};
@@ -676,6 +686,12 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
 
     //---------------------------------
     VP_PUBLIC_CHK_NULL_RETURN(m_allocator);
+
+    if (!m_mmc->IsMmcEnabled())
+    {
+        compressible    = 0;
+        compressionMode = MOS_MMC_DISABLED;
+    }
     //---------------------------------
 
     // compressible should be compared with bCompressible since it is inited by bCompressible in previous call
@@ -705,12 +721,12 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     }
 
     //if free the compressed surface, need set the sync dealloc flag as 1 for sync dealloc for aux table update
-    if (surface && isSyncFreeNeededForMMCSurface(surface->osSurface))
+    if (surface && IsSyncFreeNeededForMMCSurface(surface->osSurface))
     {
         resFreeFlags.SynchronousDestroy = 1;
         VP_PUBLIC_NORMALMESSAGE("Set SynchronousDestroy flag for compressed resource %s", surfaceName);
     }
-    VP_PUBLIC_CHK_STATUS_RETURN(DestroyVpSurface(surface, resFreeFlags));
+    VP_PUBLIC_CHK_STATUS_RETURN(DestroyVpSurface(surface, deferredDestroyed, resFreeFlags));
 
     AllocParamsInitType(allocParams, surface, defaultResType, defaultTileType);
 
@@ -722,6 +738,7 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     allocParams.pBufName        = surfaceName;
     allocParams.dwArraySize     = 1;
     allocParams.ResUsageType    = resUsageType;
+    allocParams.m_tileModeByForce = tileModeByForce;
 
     surface = AllocateVpSurface(allocParams, zeroOnAllocate);
     VP_PUBLIC_CHK_NULL_RETURN(surface);
@@ -729,6 +746,81 @@ MOS_STATUS VpAllocator::ReAllocateSurface(
     allocated = true;
     return MOS_STATUS_SUCCESS;
 }
+
+// for debug purpose
+#if (_DEBUG || _RELEASE_INTERNAL)
+MOS_STATUS VpAllocator::ReAllocateSurface(
+    PVPHAL_SURFACE        surface,
+    PCCHAR                surfaceName,
+    MOS_FORMAT            format,
+    MOS_GFXRES_TYPE       defaultResType,
+    MOS_TILE_TYPE         defaultTileType,
+    uint32_t              width,
+    uint32_t              height,
+    bool                  compressible,
+    MOS_RESOURCE_MMC_MODE compressionMode,
+    bool *                allocated,
+    MOS_HW_RESOURCE_DEF   resUsageType,
+    MOS_TILE_MODE_GMM     tileModeByForce)
+{
+    MOS_STATUS              eStatus;
+    VPHAL_GET_SURFACE_INFO  info;
+    MOS_ALLOC_GFXRES_PARAMS allocParams;
+    MOS_GFXRES_FREE_FLAGS   resFreeFlags = {0};
+
+    //---------------------------------
+    VP_PUBLIC_ASSERT(&surface->OsResource);
+    //---------------------------------
+
+    eStatus      = MOS_STATUS_SUCCESS;
+    *allocated = false;
+
+    // compressible should be compared with compressible since it is inited by compressible in previous call
+    // TileType of surface should be compared since we need to reallocate surface if TileType changes
+    if (!Mos_ResourceIsNull(&surface->OsResource) &&
+        (surface->dwWidth == width) &&
+        (surface->dwHeight == height) &&
+        (surface->Format == format) &&
+        (surface->bCompressible == compressible) &&
+        (surface->CompressionMode == compressionMode) &&
+        (surface->TileType == defaultTileType))
+    {
+        return eStatus;
+    }
+
+    MOS_ZeroMemory(&allocParams, sizeof(MOS_ALLOC_GFXRES_PARAMS));
+
+    VpHal_AllocParamsInitType(&allocParams, surface, defaultResType, defaultTileType);
+
+    allocParams.dwWidth           = width;
+    allocParams.dwHeight          = height;
+    allocParams.Format            = format;
+    allocParams.bIsCompressible   = compressible;
+    allocParams.CompressionMode   = compressionMode;
+    allocParams.pBufName          = surfaceName;
+    allocParams.dwArraySize       = 1;
+    allocParams.ResUsageType      = resUsageType;
+    allocParams.m_tileModeByForce = tileModeByForce;
+
+    VP_PUBLIC_CHK_STATUS_RETURN(DestroyResource(&surface->OsResource));
+
+    // Allocate surface
+    VP_PUBLIC_CHK_STATUS_RETURN(AllocateResource(&surface->OsResource, allocParams));
+
+    // Get surface information
+    MOS_ZeroMemory(&info, sizeof(VPHAL_GET_SURFACE_INFO));
+
+    // Pre-set to get surface info
+    surface->Format = format;
+
+    VP_PUBLIC_CHK_STATUS_RETURN(GetSurfaceInfo(surface, info));
+
+    *allocated = true;
+
+    VP_PUBLIC_ASSERT(eStatus == MOS_STATUS_SUCCESS);
+    return eStatus;
+}
+#endif
 
 MOS_STATUS VpAllocator::OsFillResource(
     PMOS_RESOURCE     osResource,
@@ -963,7 +1055,7 @@ MOS_STATUS VpAllocator::UpdateResourceUsageType(
 }
 
 
-bool VpAllocator::isSyncFreeNeededForMMCSurface(PMOS_SURFACE pOsSurface)
+bool VpAllocator::IsSyncFreeNeededForMMCSurface(PMOS_SURFACE pOsSurface)
 {
     if (nullptr == pOsSurface)
     {
@@ -971,6 +1063,23 @@ bool VpAllocator::isSyncFreeNeededForMMCSurface(PMOS_SURFACE pOsSurface)
     }
 
     return (m_allocator->isSyncFreeNeededForMMCSurface(pOsSurface));
+}
+
+void VpAllocator::CleanRecycler()
+{
+    while (!m_recycler.empty())
+    {
+        MOS_GFXRES_FREE_FLAGS resFreeFlags = {};
+        VP_SURFACE *surf = m_recycler.back();
+        m_recycler.pop_back();
+        //if free the compressed surface, need set the sync dealloc flag as 1 for sync dealloc for aux table update
+        if (surf && IsSyncFreeNeededForMMCSurface(surf->osSurface))
+        {
+            resFreeFlags.SynchronousDestroy = 1;
+            VP_PUBLIC_NORMALMESSAGE("Set SynchronousDestroy flag for compressed resource.");
+        }
+        DestroyVpSurface(surf, false, resFreeFlags);
+    }
 }
 
 bool VP_SURFACE::IsEmpty()
@@ -1009,6 +1118,22 @@ MOS_STATUS VP_SURFACE::Clean()
     bVEBOXCroppingUsed  = false;
 
     return MOS_STATUS_SUCCESS;
+}
+
+uint64_t VP_SURFACE::GetAllocationHandle()
+{
+#if(LINUX || ANDROID)
+    if (osSurface && osSurface->OsResource.bo)
+    {
+        return osSurface->OsResource.bo->handle;
+    }
+    else
+    {
+        return 0;
+    }
+#else
+    return osSurface ? osSurface->OsResource.AllocationInfo.m_AllocationHandle : 0;
+#endif
 }
 
 MOS_STATUS VpAllocator::SetMmcFlags(MOS_SURFACE &osSurface)

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2019, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -561,8 +561,7 @@ MOS_STATUS VphalSurfaceDumper::DumpSurfaceToFile(
 
         bool isPlanar = false;
 
-        isPlanar = (pSurface->OsResource.Format == Format_NV12) || (pSurface->OsResource.Format == Format_P010) || (pSurface->OsResource.Format == Format_P016);
-
+        isPlanar = (pSurface->Format == Format_NV12) || (pSurface->Format == Format_P010) || (pSurface->Format == Format_P016);
         if (isPlanar && pSurface->TileType != MOS_TILE_LINEAR)
         {
             bool bAllocated;
@@ -593,6 +592,15 @@ MOS_STATUS VphalSurfaceDumper::DumpSurfaceToFile(
                 &m_temp2DSurfForCopy->OsResource,
                 &LockFlags);
             pLockedResource = &m_temp2DSurfForCopy->OsResource;
+
+            // get plane definitions
+            VPHAL_DEBUG_CHK_STATUS(GetPlaneDefs(
+                m_temp2DSurfForCopy,
+                planes,
+                &dwNumPlanes,
+                &dwSize,
+                hasAuxSurf,        //(hasAuxSurf && enableAuxDump),
+                !enableAuxDump));  // !(hasAuxSurf && enableAuxDump)));
         }
         else
         {
@@ -3108,7 +3116,6 @@ void VphalParameterDumper::GetParametersDumpSpec()
     pDumpSpec->outFileLocation[0] = '\0';
     cStringData[0]                = '\0';
     bDumpEnabled                  = false;
-
     // Get start frame
     // if start frame is not got assign a default value of 0
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
@@ -3133,7 +3140,7 @@ void VphalParameterDumper::GetParametersDumpSpec()
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
     UserFeatureData.StringData.pStringData = cStringData;
     UserFeatureData.StringData.uMaxSize = MOS_USER_CONTROL_MAX_DATA_SIZE;
-    UserFeatureData.StringData.uSize = 0;    //set the default value. 0 is empty buffer.
+    UserFeatureData.StringData.uSize = 0;  //set the default value. 0 is empty buffer.
 
     MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
         nullptr,
@@ -3183,7 +3190,16 @@ void VphalParameterDumper::GetParametersDumpSpec()
     }
 #endif
 
-    if ((eStatus != MOS_STATUS_SUCCESS) || (!bDumpEnabled))
+    // Get enableSkuWaDump
+    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
+    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
+        nullptr,
+        __VPHAL_DBG_PARA_DUMP_ENABLE_SKUWA_DUMP_ID,
+        &UserFeatureData,
+        m_osInterface->pOsContext));
+    pDumpSpec->enableSkuWaDump = UserFeatureData.u32Data;
+
+    if ((eStatus != MOS_STATUS_SUCCESS) || (!bDumpEnabled)) 
     {
         pDumpSpec->uiStartFrame = 1;
         pDumpSpec->uiEndFrame = 0;
@@ -4453,5 +4469,14 @@ const char * VphalParameterDumper::GetDenoiseModeStr(VPHAL_NOISELEVEL noise_leve
     }
 
     return nullptr;
+}
+
+char *VphalParameterDumper::GetDumpSpecLocation() 
+{
+    return m_dumpSpec.outFileLocation;
+}
+bool VphalParameterDumper::GetDumpSpecSkuWaDumpEnable()
+{
+    return m_dumpSpec.enableSkuWaDump;
 }
 #endif // (_DEBUG || _RELEASE_INTERNAL)

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -31,10 +31,15 @@
 #include "mos_defs.h"
 #include "vp_pipeline_common.h"
 #include "vp_sfc_common.h"
+#include "vp_render_common.h"
 #include "vp_utils.h"
 #include "sw_filter.h"
+#include "vp_feature_caps.h"
 
 namespace vp {
+
+#define ESR_LAYER_NUM       10
+
 class VpCmdPacket;
 
 class VpFilter
@@ -139,11 +144,11 @@ struct _SFC_SCALING_PARAMS
 struct _SFC_CSC_PARAMS
 {
     bool                            bCSCEnabled;                                 // CSC Enabled
-    bool                            bInputColorSpace;                            // 0: YUV color space, 1:RGB color space
+    bool                            isInputColorSpaceRGB;                        // 0: YUV color space, 1:RGB color space
     bool                            bIEFEnable;                                  // IEF Enabled
     bool                            bChromaUpSamplingEnable;                     // ChromaUpSampling
     bool                            b8tapChromafiltering;                        // Enables 8 tap filtering for Chroma Channels
-    VPHAL_CSPACE                    inputColorSpcase;                            // Input Color Space
+    VPHAL_CSPACE                    inputColorSpace;                             // Input Color Space
     MOS_FORMAT                      inputFormat;                                 // SFC Input Format
     MOS_FORMAT                      outputFormat;                                // SFC Output Format
     PVPHAL_IEF_PARAMS               iefParams;                                   // Vphal Params
@@ -232,8 +237,8 @@ struct _VEBOX_PROCAMP_PARAMS
 struct _VEBOX_CSC_PARAMS
 {
     bool                            bCSCEnabled;                                 // CSC Enabled
-    VPHAL_CSPACE                    inputColorSpcase;                            // Input Color Space
-    VPHAL_CSPACE                    outputColorSpcase;                            // Input Color Space
+    VPHAL_CSPACE                    inputColorSpace;                             // Input Color Space
+    VPHAL_CSPACE                    outputColorSpace;                            // Input Color Space
     MOS_FORMAT                      inputFormat;                                 // Input Format
     MOS_FORMAT                      outputFormat;                                // Output Format
     PVPHAL_ALPHA_PARAMS             alphaParams;                                 // Output Alpha Params
@@ -243,14 +248,6 @@ struct _VEBOX_CSC_PARAMS
     uint32_t                        chromaUpSamplingHorizontalCoef;              // Chroma UpSampling Horizontal Coeff
     uint32_t                        chromaDownSamplingVerticalCoef;              // Chroma DownSampling Vertical Coeff
     uint32_t                        chromaDownSamplingHorizontalCoef;            // Chroma DownSampling Horizontal Coeff
-};
-
-struct _VEBOX_UPDATE_PARAMS
-{
-    bool                            bSecureCopyVeboxState;
-    bool                            bDnEnabled;
-    bool                            bAutoDetect;
-    VPHAL_NOISELEVEL                NoiseLevel;
 };
 
 struct _VEBOX_HDR_PARAMS
@@ -285,10 +282,105 @@ using VEBOX_PROCAMP_PARAMS  = _VEBOX_PROCAMP_PARAMS;
 using PVEBOX_PROCAMP_PARAMS = VEBOX_PROCAMP_PARAMS *;
 using VEBOX_CSC_PARAMS      = _VEBOX_CSC_PARAMS;
 using PVEBOX_CSC_PARAMS     = VEBOX_CSC_PARAMS *;
+
+using KERNEL_ARGS = std::vector<KRN_ARG>;
+
+struct _VEBOX_UPDATE_PARAMS
+{
+    VEBOX_DN_PARAMS                 denoiseParams;
+    VP_EXECUTE_CAPS                 veboxExecuteCaps;
+    std::vector<uint32_t>           kernelGroup;
+};
+
 using VEBOX_UPDATE_PARAMS      = _VEBOX_UPDATE_PARAMS;
 using PVEBOX_UPDATE_PARAMS     = VEBOX_UPDATE_PARAMS *;
 using VEBOX_HDR_PARAMS      = _VEBOX_HDR_PARAMS;
 using PVEBOX_HDR_PARAMS     = VEBOX_HDR_PARAMS *;
+
+struct SR_LAYER_PARAMS
+{
+    uint32_t                                          uLayerID;
+    KERNEL_ARGS                                       kernelArgs;
+    SurfaceIndex                                      outputSurface;
+    uint32_t                                          uWidth;
+    uint32_t                                          uHeight;
+    MOS_FORMAT                                        format;
+    std::string                                       sKernelName;
+    uint32_t                                          uKernelID;
+    SurfaceIndex                                      weightBuffer;
+    uint32_t                                          uWeightBufferSize;
+    uint32_t                                          uOutChannels;
+    uint32_t                                          uInChannels;
+    uint32_t                                          uWeightsPerChannel;
+
+    SurfaceIndex                                      biasBuffer;
+    uint32_t                                          uBiasBufferSize;
+    SurfaceIndex                                      reluBuffer;
+    uint32_t                                          uReluBufferSize;
+
+    uint32_t                                          uThreadWidth;
+    uint32_t                                          uThreadHeight;
+
+    uint16_t                                          imgDim[2];
+    uint16_t                                          channelDim[2];
+
+    float                                             reluValue;
+    uint16_t                                          relu;
+    uint16_t                                          addToOutput;
+};
+
+struct CHROMA_LAYER_PARAMS
+{
+    uint32_t                                          uLayerID;
+    KERNEL_ARGS                                       kernelArgs;
+    SurfaceIndex                                      inputSRYSurface;
+    SurfaceIndex                                      inputUSurface;
+    SurfaceIndex                                      inputVSurface;
+    SurfaceIndex                                      outputSurface;
+    uint16_t                                          kernelFormat;
+    float                                             fDeltaU;
+    float                                             fDeltaV;
+    float                                             fShiftU;
+    float                                             fShiftV;
+    float                                             fScaleX;
+    float                                             fScaleY;
+    float                                             fChromaScaleX;
+    float                                             fChromaScaleY;
+    float                                             original_x;
+    float                                             original_y;
+    float                                             fScaleRatioX;
+    float                                             fScaleRatioY;
+
+    std::string                                       sKernelName;
+    uint32_t                                          uKernelID;
+
+    uint32_t                                          uThreadWidth;
+    uint32_t                                          uThreadHeight;
+};
+
+struct  _RENDER_SR_PARAMS
+{
+    bool bEnableSR;
+    std::vector<SR_LAYER_PARAMS> layersParam;
+    CHROMA_LAYER_PARAMS chromaLayerParam;
+    const uint8_t *(*sr2xConvWeightTable)[ESR_LAYER_NUM];
+    const uint8_t *(*sr2xConvBiasTable)[ESR_LAYER_NUM];
+    const uint8_t *(*sr2xConvPreluTable)[ESR_LAYER_NUM];
+
+    const uint32_t (*sr2xConvWeightTableSize)[ESR_LAYER_NUM];
+    const uint32_t (*sr2xConvBiasTableSize)[ESR_LAYER_NUM];
+    const uint32_t (*sr2xConvPreluTableSize)[ESR_LAYER_NUM];
+    uint32_t uInputWidth;
+    uint32_t uInputHeight;
+    MOS_FORMAT inputFormat;
+    RECT                    rcSrcInput;
+    RECT                    rcDstInput;                     //!< Input dst rect without rotate being applied.
+    uint32_t                uOutputWidth;
+    uint32_t                uOutputHeight;
+};
+
+using RENDER_SR_PARAMS = _RENDER_SR_PARAMS;
+using PRENDER_SR_PARAMS = RENDER_SR_PARAMS*;
 
 class SwFilterPipe;
 class HwFilter;
@@ -332,17 +424,19 @@ private:
 class PolicyFeatureHandler
 {
 public:
-    PolicyFeatureHandler();
+    PolicyFeatureHandler(VP_HW_CAPS &hwCaps);
     virtual ~PolicyFeatureHandler();
     virtual bool IsFeatureEnabled(SwFilterPipe &swFilterPipe);
     virtual HwFilterParameter *CreateHwFilterParam(VP_EXECUTE_CAPS vpExecuteCaps, SwFilterPipe &swFilterPipe, PVP_MHWINTERFACE pHwInterface);
     virtual bool IsFeatureEnabled(VP_EXECUTE_CAPS vpExecuteCaps);
+    virtual MOS_STATUS UpdateFeaturePipe(VP_EXECUTE_CAPS caps, SwFilter &feature, SwFilterPipe &featurePipe, SwFilterPipe &executePipe, bool isInputPipe, int index);
     FeatureType GetType();
     HwFilterParameter *GetHwFeatureParameterFromPool();
     MOS_STATUS ReleaseHwFeatureParameter(HwFilterParameter *&pParam);
 protected:
     FeatureType m_Type = FeatureTypeInvalid;
     std::vector<HwFilterParameter *> m_Pool;
+    VP_HW_CAPS  &m_hwCaps;
 };
 
 class PacketParamFactoryBase

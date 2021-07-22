@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -449,7 +449,11 @@ VAStatus MediaLibvaCapsG12::GetPlatformSpecificAttrib(VAProfile profile,
             {
                 *value = ENCODE_JPEG_MAX_PIC_WIDTH;
             }
-            else if(IsHevcProfile(profile) || (IsVp9Profile(profile)))
+            else if(IsHevcProfile(profile))
+            {
+                *value = CODEC_16K_MAX_PIC_WIDTH;
+            }
+            else if(IsVp9Profile(profile))
             {
                 *value = CODEC_8K_MAX_PIC_WIDTH;
             }
@@ -469,7 +473,11 @@ VAStatus MediaLibvaCapsG12::GetPlatformSpecificAttrib(VAProfile profile,
             {
                 *value = ENCODE_JPEG_MAX_PIC_HEIGHT;
             }
-            else if(IsHevcProfile(profile) || (IsVp9Profile(profile)))
+            else if(IsHevcProfile(profile))
+            {
+                *value = CODEC_12K_MAX_PIC_HEIGHT;
+            }
+            else if(IsVp9Profile(profile))
             {
                 *value = CODEC_8K_MAX_PIC_HEIGHT;
             }
@@ -803,6 +811,8 @@ VAStatus MediaLibvaCapsG12::LoadProfileEntrypoints()
     DDI_CHK_RET(status, "Failed to initialize Caps!");
     status = LoadNoneProfileEntrypoints();
     DDI_CHK_RET(status, "Failed to initialize Caps!");
+    status = m_CapsCp->LoadCpProfileEntrypoints();
+    DDI_CHK_RET(status, "Failed to initialize CP Caps!");
 
     return status;
 }
@@ -1125,7 +1135,9 @@ VAStatus MediaLibvaCapsG12::AddEncSurfaceAttributes(
         }
         else if(IsHevcProfile(profile))
         {
-            attribList[numAttribs].value.value.i = CODEC_12K_MAX_PIC_HEIGHT;
+            uint32_t heightValue = CODEC_12K_MAX_PIC_HEIGHT;
+            GetPlatformSpecificAttrib(profile, entrypoint, VAConfigAttribMaxPictureHeight, &heightValue);
+            attribList[numAttribs].value.value.i = (int32_t) heightValue;
         }
         else if(IsVp9Profile(profile))
         {
@@ -1603,7 +1615,7 @@ VAStatus MediaLibvaCapsG12::CreateEncAttributes(
 
     attrib.type = VAConfigAttribMaxPictureHeight;
     GetPlatformSpecificAttrib(profile, entrypoint,
-        VAConfigAttribMaxPictureWidth, &attrib.value);
+        VAConfigAttribMaxPictureHeight, &attrib.value);
     (*attribList)[attrib.type] = attrib.value;
 
     attrib.type = VAConfigAttribEncJPEG;
@@ -1648,6 +1660,10 @@ VAStatus MediaLibvaCapsG12::CreateEncAttributes(
     {
         attrib.value = VA_ENC_PACKED_HEADER_RAW_DATA;
     }
+    else if(IsVp9Profile(profile))
+    {
+        attrib.value = VA_ENC_PACKED_HEADER_RAW_DATA;
+    }
 
     (*attribList)[attrib.type] = attrib.value;
     if(IsJpegProfile(profile))
@@ -1664,8 +1680,15 @@ VAStatus MediaLibvaCapsG12::CreateEncAttributes(
         if (IsHevcProfile(profile))
         {
             if (entrypoint != VAEntrypointEncSliceLP)
+            {
                 attrib.value |= VA_RC_ICQ;
-
+            }
+#if VA_CHECK_VERSION(1, 10, 0)
+            else
+            {
+                attrib.value |= VA_RC_TCBRC;
+            }
+#endif
             attrib.value |= VA_RC_VCM | VA_RC_QVBR;
         }
         if (IsVp9Profile(profile))
@@ -2224,6 +2247,7 @@ VAStatus MediaLibvaCapsG12::CreateDecAttributes(
                 encryptTypes, DDI_CP_ENCRYPT_TYPES_NUM);
         if (numTypes > 0)
         {
+            attrib.value = 0;
             for (int32_t j = 0; j < numTypes; j++)
             {
                 attrib.value |= encryptTypes[j];
@@ -2261,6 +2285,16 @@ VAStatus MediaLibvaCapsG12::CreateDecAttributes(
             (VAConfigAttribType)VAConfigAttribCustomRoundingControl, &attrib.value);
     (*attribList)[attrib.type] = attrib.value;
 
+#if VA_CHECK_VERSION(1, 11, 0)
+    if(IsAV1Profile(profile) && MEDIA_IS_SKU(&(m_mediaCtx->SkuTable), FtrAV1VLDLSTDecoding))
+    {
+        attrib.type                             = VAConfigAttribDecAV1Features;
+        VAConfigAttribValDecAV1Features feature = {0};
+        feature.bits.lst_support                = true;
+        attrib.value                            = feature.value;
+        (*attribList)[attrib.type]              = attrib.value;
+    }
+#endif
     return status;
 }
 
@@ -2491,10 +2525,24 @@ extern template class MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>;
 static bool tglLPRegistered = MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>::
     RegisterCaps<MediaLibvaCapsG12>((uint32_t)IGFX_TIGERLAKE_LP);
 
+#ifdef IGFX_GEN12_RKL_SUPPORTED
 static bool rklRegistered = MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>::
     RegisterCaps<MediaLibvaCapsG12>((uint32_t)IGFX_ROCKETLAKE);
+#endif
+
+
+#ifdef IGFX_GEN12_ADLS_SUPPORTED
+static bool adlsRegistered = MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>::
+    RegisterCaps<MediaLibvaCapsG12>((uint32_t)IGFX_ALDERLAKE_S);
+#endif
 
 #ifdef IGFX_GEN12_DG1_SUPPORTED
 static bool dg1Registered = MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>::
     RegisterCaps<MediaLibvaCapsG12>((uint32_t)IGFX_DG1);
 #endif
+
+#ifdef IGFX_GEN12_ADLP_SUPPORTED
+static bool adlpRegistered = MediaLibvaCapsFactory<MediaLibvaCaps, DDI_MEDIA_CONTEXT>::
+    RegisterCaps<MediaLibvaCapsG12>((uint32_t)IGFX_ALDERLAKE_P);
+#endif
+

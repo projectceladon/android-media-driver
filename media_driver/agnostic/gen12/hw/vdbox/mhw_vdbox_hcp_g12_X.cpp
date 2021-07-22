@@ -713,7 +713,7 @@ MOS_STATUS MhwVdboxHcpInterfaceG12::GetHcpStateCommandSize(
                     4 * PATCH_LIST_COMMAND(MI_ATOMIC_CMD) +
                     2 * PATCH_LIST_COMMAND(MI_CONDITIONAL_BATCH_BUFFER_END_CMD) +
                     3 * PATCH_LIST_COMMAND(MI_SEMAPHORE_WAIT_CMD) +
-                    3 * PATCH_LIST_COMMAND(MI_STORE_DATA_IMM_CMD) +
+                    18 * PATCH_LIST_COMMAND(MI_STORE_DATA_IMM_CMD) +
                     2 * PATCH_LIST_COMMAND(MI_FLUSH_DW_CMD) +
                     2 * PATCH_LIST_COMMAND(MI_STORE_REGISTER_MEM_CMD);
 
@@ -1460,6 +1460,7 @@ MOS_STATUS MhwVdboxHcpInterfaceG12::AddHcpDecodeSurfaceStateCmd(
     PMHW_VDBOX_SURFACE_PARAMS        params)
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+    uint32_t   uvPlaneAlignment = m_uvPlaneAlignmentLegacy;
 
     MHW_MI_CHK_NULL(params);
 
@@ -1561,6 +1562,18 @@ MOS_STATUS MhwVdboxHcpInterfaceG12::AddHcpDecodeSurfaceStateCmd(
             return MOS_STATUS_INVALID_PARAMETER;
         }
     }
+
+    if (params->ucSurfaceStateId == CODECHAL_HCP_SRC_SURFACE_ID)
+    {
+        uvPlaneAlignment = params->dwUVPlaneAlignment ? params->dwUVPlaneAlignment : m_rawUVPlaneAlignment;
+    }
+    else
+    {
+        uvPlaneAlignment = params->dwUVPlaneAlignment ? params->dwUVPlaneAlignment : m_reconUVPlaneAlignment;
+    }
+
+    cmd->DW2.YOffsetForUCbInPixel =
+        MOS_ALIGN_CEIL((params->psSurface->UPlaneOffset.iSurfaceOffset - params->psSurface->dwOffset) / params->psSurface->dwPitch + params->psSurface->RenderOffset.YUV.U.YOffset, uvPlaneAlignment);
 
     if ((params->ucBitDepthLumaMinus8 == 4) || (params->ucBitDepthChromaMinus8 == 4)) // 12 bit
         cmd->DW3.DefaultAlphaValue = 0xfff0;
@@ -2445,7 +2458,7 @@ MOS_STATUS MhwVdboxHcpInterfaceG12::AddHcpIndObjBaseAddrCmd(
                 m_cacheabilitySettings[MOS_CODEC_RESOURCE_USAGE_MFC_INDIRECT_PAKBASE_OBJECT_CODEC].Value;
 
             resourceParams.presResource = params->presPakBaseObjectBuffer;
-            resourceParams.dwOffset = 0;
+            resourceParams.dwOffset = params->presPakBaseObjectBuffer->dwResourceOffset;
             resourceParams.pdwCmd = (cmd.DW9_10.Value);
             resourceParams.dwLocationInCmd = 9;
             resourceParams.dwSize = MOS_ALIGN_FLOOR(params->dwPakBaseObjectSize, 0x1000);

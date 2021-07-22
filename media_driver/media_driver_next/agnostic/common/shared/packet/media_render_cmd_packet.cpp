@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -149,7 +149,7 @@ MOS_STATUS RenderCmdPacket::Submit(MOS_COMMAND_BUFFER* commandBuffer, uint8_t pa
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnSendMediaStates(
         m_renderHal,
         commandBuffer,
-        &m_mediaWalkerParams,
+        (m_walkerType == WALKER_TYPE_MEDIA) ? &m_mediaWalkerParams : nullptr,
         &m_gpgpuWalkerParams));
 
     // Write back GPU Status tag
@@ -258,7 +258,10 @@ MOS_STATUS RenderCmdPacket::RenderEngineSetup()
     // Assign and Reset binding table
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnAssignBindingTable(
         m_renderHal,
-        &m_bindingTable));
+        &m_renderData.bindingTable));
+
+    // Reset a new Binding index from start
+    m_renderData.bindingTableEntry = 0;
 
     // load kernels before packet submit PipeLine to load kernel
 
@@ -352,7 +355,6 @@ MOS_STATUS RenderCmdPacket::SetPowerMode(uint32_t KernelID)
 
 uint32_t RenderCmdPacket::SetSurfaceForHwAccess(PMOS_SURFACE surface, PRENDERHAL_SURFACE_NEXT pRenderSurface, PRENDERHAL_SURFACE_STATE_PARAMS pSurfaceParams, bool bWrite)
 {
-
     PMOS_INTERFACE                  pOsInterface;
     PRENDERHAL_SURFACE_STATE_ENTRY  pSurfaceEntries[MHW_MAX_SURFACE_PLANES];
     int32_t                         iSurfaceEntries;
@@ -381,7 +383,14 @@ uint32_t RenderCmdPacket::SetSurfaceForHwAccess(PMOS_SURFACE surface, PRENDERHAL
         pSurfaceParams = &surfaceParams;
     }
 
-    pSurfaceParams->Type             = m_renderHal->SurfaceTypeDefault;
+    if (pSurfaceParams->bAVS)
+    {
+        pSurfaceParams->Type = m_renderHal->SurfaceTypeAdvanced;
+    }
+    else
+    {
+        pSurfaceParams->Type = m_renderHal->SurfaceTypeDefault;
+    }
 
     RENDER_PACKET_CHK_STATUS_RETURN(InitRenderHalSurface(
         *surface,
@@ -401,26 +410,160 @@ uint32_t RenderCmdPacket::SetSurfaceForHwAccess(PMOS_SURFACE surface, PRENDERHAL
         pSurfaceEntries,
         nullptr));
 
-    if (m_bindingTableEntry > 15)
+    if (m_renderData.bindingTableEntry > 15)
     {
         RENDER_PACKET_ASSERTMESSAGE("input surface support up to 16 RSS");
-        m_bindingTableEntry = 0;
+        m_renderData.bindingTableEntry = 0;
     }
 
-    uint32_t iBTEntry = m_bindingTableEntry;
+    uint32_t iBTEntry = m_renderData.bindingTableEntry;
     // Bind surface states------------------------------------------------------
-    for (i = 0; i < iSurfaceEntries; i++, m_bindingTableEntry++)
+    for (i = 0; i < iSurfaceEntries; i++, m_renderData.bindingTableEntry++)
     {
         RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnBindSurfaceState(
             m_renderHal,
-            m_bindingTable,
-            m_bindingTableEntry,
+            m_renderData.bindingTable,
+            m_renderData.bindingTableEntry,
             pSurfaceEntries[i]));
 
-        pRenderSurface->Index = m_bindingTableEntry;
+        pRenderSurface->Index = m_renderData.bindingTableEntry;
     }
 
     return iBTEntry;
+}
+
+uint32_t RenderCmdPacket::SetSurfaceForHwAccess(
+    PMOS_SURFACE                    surface, 
+    PRENDERHAL_SURFACE_NEXT         pRenderSurface, 
+    PRENDERHAL_SURFACE_STATE_PARAMS pSurfaceParams, 
+    uint32_t                        bindingIndex, 
+    bool                            bWrite)
+{
+    PMOS_INTERFACE                  pOsInterface;
+    PRENDERHAL_SURFACE_STATE_ENTRY  pSurfaceEntries[MHW_MAX_SURFACE_PLANES];
+    int32_t                         iSurfaceEntries;
+    int32_t                         i;
+    MOS_STATUS                      eStatus;
+    RENDERHAL_SURFACE_STATE_PARAMS  surfaceParams;
+
+    // Initialize Variables
+    eStatus = MOS_STATUS_SUCCESS;
+    pOsInterface = m_osInterface;
+
+    RENDER_PACKET_CHK_NULL_RETURN(pRenderSurface);
+    RENDER_PACKET_CHK_NULL_RETURN(pOsInterface);
+
+    // Register surfaces for rendering (GfxAddress/Allocation index)
+    // Register resource
+    RENDER_PACKET_CHK_STATUS_RETURN(m_osInterface->pfnRegisterResource(
+        m_osInterface,
+        &surface->OsResource,
+        bWrite,
+        true));
+
+    if (!pSurfaceParams)
+    {
+        MOS_ZeroMemory(&surfaceParams, sizeof(RENDERHAL_SURFACE_STATE_PARAMS));
+        pSurfaceParams = &surfaceParams;
+    }
+
+    if (pSurfaceParams->bAVS)
+    {
+        pSurfaceParams->Type = m_renderHal->SurfaceTypeAdvanced;
+    }
+    else
+    {
+        pSurfaceParams->Type = m_renderHal->SurfaceTypeDefault;
+    }
+
+    RENDER_PACKET_CHK_STATUS_RETURN(InitRenderHalSurface(
+        *surface,
+        pRenderSurface));
+
+    if (bWrite)
+    {
+        pRenderSurface->SurfType = RENDERHAL_SURF_OUT_RENDERTARGET;
+    }
+
+    // Setup surface states-----------------------------------------------------
+    RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnSetupSurfaceState(
+        m_renderHal,
+        pRenderSurface,
+        pSurfaceParams,
+        &iSurfaceEntries,  // for most cases, surface entry should only take 1 entry, need align with kerenl design
+        pSurfaceEntries,
+        nullptr));
+
+    uint32_t iBTEntry = bindingIndex;
+    // Bind surface states------------------------------------------------------
+    for (i = 0; i < iSurfaceEntries; i++, iBTEntry++)
+    {
+        RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnBindSurfaceState(
+            m_renderHal,
+            m_renderData.bindingTable,
+            iBTEntry,
+            pSurfaceEntries[i]));
+
+        pRenderSurface->Index = iBTEntry;
+    }
+
+    return bindingIndex;
+}
+
+uint32_t RenderCmdPacket::SetBufferForHwAccess(PMOS_SURFACE buffer, PRENDERHAL_SURFACE_NEXT pRenderSurface, PRENDERHAL_SURFACE_STATE_PARAMS pSurfaceParams, bool bWrite)
+{
+    RENDERHAL_SURFACE                   RenderHalSurface;
+    RENDERHAL_SURFACE_STATE_PARAMS      SurfaceParam;
+    PRENDERHAL_SURFACE_STATE_ENTRY      pSurfaceEntry;
+
+    RENDER_PACKET_CHK_NULL_RETURN(m_osInterface);
+    RENDER_PACKET_CHK_NULL_RETURN(m_osInterface->osCpInterface);
+    RENDER_PACKET_CHK_NULL_RETURN(buffer);
+
+    MOS_ZeroMemory(&RenderHalSurface, sizeof(RenderHalSurface));
+
+    // not support CP yet
+    if (m_osInterface->osCpInterface->IsHMEnabled())
+    {
+        RENDER_PACKET_ASSERTMESSAGE("ERROR, need to use VpHal_CommonSetBufferSurfaceForHwAccess if under CP HM.");
+    }
+
+    // Register surfaces for rendering (GfxAddress/Allocation index)
+    // Register resource
+    RENDER_PACKET_CHK_STATUS_RETURN(m_osInterface->pfnRegisterResource(
+        m_osInterface,
+        &buffer->OsResource,
+        bWrite,
+        true));
+
+    // Setup Buffer surface-----------------------------------------------------
+    if (pSurfaceParams == nullptr)
+    {
+        MOS_ZeroMemory(&SurfaceParam, sizeof(SurfaceParam));
+        pSurfaceParams = &SurfaceParam;
+    }
+
+    RENDER_PACKET_CHK_STATUS_RETURN(InitRenderHalSurface(
+        *buffer,
+        &RenderHalSurface));
+
+    RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnSetupBufferSurfaceState(
+        m_renderHal,
+        &RenderHalSurface,
+        pSurfaceParams,
+        &pSurfaceEntry));
+
+    // Bind surface state-------------------------------------------------------
+    RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnBindSurfaceState(
+        m_renderHal,
+        m_renderData.bindingTable,
+        m_renderData.bindingTableEntry,
+        pSurfaceEntry));
+
+    pRenderSurface->Index = m_renderData.bindingTableEntry;
+
+    m_renderData.bindingTableEntry++;
+    return pRenderSurface->Index;
 }
 
 uint32_t RenderCmdPacket::SetBufferForHwAccess(MOS_BUFFER buffer, PRENDERHAL_SURFACE_NEXT pRenderSurface, PRENDERHAL_SURFACE_STATE_PARAMS pSurfaceParams, bool bWrite)
@@ -431,6 +574,8 @@ uint32_t RenderCmdPacket::SetBufferForHwAccess(MOS_BUFFER buffer, PRENDERHAL_SUR
 
     RENDER_PACKET_CHK_NULL_RETURN(m_osInterface);
     RENDER_PACKET_CHK_NULL_RETURN(m_osInterface->osCpInterface);
+
+    MOS_ZeroMemory(&RenderHalSurface, sizeof(RenderHalSurface));
 
     // not support CP yet
     if (m_osInterface->osCpInterface->IsHMEnabled())
@@ -466,25 +611,25 @@ uint32_t RenderCmdPacket::SetBufferForHwAccess(MOS_BUFFER buffer, PRENDERHAL_SUR
     // Bind surface state-------------------------------------------------------
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnBindSurfaceState(
         m_renderHal,
-        m_bindingTable,
-        m_bindingTableEntry,
+        m_renderData.bindingTable,
+        m_renderData.bindingTableEntry,
         pSurfaceEntry));
 
-    pRenderSurface->Index = m_bindingTableEntry;
+    pRenderSurface->Index = m_renderData.bindingTableEntry;
 
-    m_bindingTableEntry++;
+    m_renderData.bindingTableEntry++;
     return pRenderSurface->Index;
 }
 
 MOS_STATUS RenderCmdPacket::SetupCurbe(void* pData, uint32_t curbeLength, uint32_t maximumNumberofThreads)
 {
-    m_curbeOffset = m_renderHal->pfnLoadCurbeData(
+    m_renderData.iCurbeOffset = m_renderHal->pfnLoadCurbeData(
         m_renderHal,
         m_renderData.mediaState,
         pData,
         curbeLength);
 
-    if (m_curbeOffset < 0)
+    if (m_renderData.iCurbeOffset < 0)
     {
         RENDER_PACKET_ASSERTMESSAGE("Curbe Set Fail, return error");
         return MOS_STATUS_UNKNOWN;
@@ -614,7 +759,7 @@ MOS_STATUS RenderCmdPacket::PrepareComputeWalkerParams(KERNEL_WALKER_PARAMS para
     alignedRect.bottom -= alignedRect.bottom % uiMediaWalkerBlockSize;
 
     // Set walker cmd params - Rasterscan
-    gpgpuWalker.InterfaceDescriptorOffset    = params.iMediaID;
+    gpgpuWalker.InterfaceDescriptorOffset    = m_renderData.mediaID;
 
     gpgpuWalker.GroupStartingX = (alignedRect.left / uiMediaWalkerBlockSize);
     gpgpuWalker.GroupStartingY = (alignedRect.top / uiMediaWalkerBlockSize);
@@ -624,10 +769,10 @@ MOS_STATUS RenderCmdPacket::PrepareComputeWalkerParams(KERNEL_WALKER_PARAMS para
     gpgpuWalker.ThreadWidth  = COMPUTE_WALKER_THREAD_SPACE_WIDTH;
     gpgpuWalker.ThreadHeight = COMPUTE_WALKER_THREAD_SPACE_HEIGHT;
     gpgpuWalker.ThreadDepth  = COMPUTE_WALKER_THREAD_SPACE_DEPTH;
-    gpgpuWalker.IndirectDataStartAddress = params.iCurbeOffset;
+    gpgpuWalker.IndirectDataStartAddress = m_renderData.iCurbeOffset;
     // Indirect Data Length is a multiple of 64 bytes (size of L3 cacheline). Bits [5:0] are zero.
     gpgpuWalker.IndirectDataLength       = MOS_ALIGN_CEIL(params.iCurbeLength, 1 << MHW_COMPUTE_INDIRECT_SHIFT);
-    gpgpuWalker.BindingTableID           = params.iBindingTable;
+    gpgpuWalker.BindingTableID = m_renderData.bindingTable;
 
     return MOS_STATUS_SUCCESS;
 }
@@ -652,22 +797,22 @@ MOS_STATUS RenderCmdPacket::LoadKernel()
         return MOS_STATUS_UNKNOWN;
     }
 
-    if (m_curbeOffset < 0)
+    if (m_renderData.iCurbeOffset < 0)
     {
         RENDER_PACKET_ASSERTMESSAGE("Curbe Set Fail, return error");
         return MOS_STATUS_UNKNOWN;
     }
     // Allocate Media ID, link to kernel
-    m_mediaID = m_renderHal->pfnAllocateMediaID(
+    m_renderData.mediaID = m_renderHal->pfnAllocateMediaID(
         m_renderHal,
         iKrnAllocation,
-        m_bindingTable,
-        m_curbeOffset,
+        m_renderData.bindingTable,
+        m_renderData.iCurbeOffset,
         (m_renderData.iCurbeLength),
         0,
         nullptr);
 
-    if (m_mediaID < 0)
+    if (m_renderData.mediaID < 0)
     {
         RENDER_PACKET_ASSERTMESSAGE("Allocate Media ID failed, return error");
         return MOS_STATUS_UNKNOWN;
@@ -691,18 +836,17 @@ MOS_STATUS RenderCmdPacket::InitRenderHalSurface(MOS_SURFACE surface, PRENDERHAL
     {
         pRenderSurface->OsSurface = surface;
     }
+
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS RenderCmdPacket::InitRenderHalBuffer(MOS_BUFFER pSurface, PRENDERHAL_SURFACE pRenderSurface)
+MOS_STATUS RenderCmdPacket::InitRenderHalBuffer(MOS_BUFFER surface, PRENDERHAL_SURFACE pRenderSurface)
 {
     RENDER_PACKET_CHK_NULL_RETURN(pRenderSurface);
-    pRenderSurface->OsSurface.OsResource = pSurface.OsResource;
-
-    pRenderSurface->OsSurface.OsResource         = pSurface.OsResource;
-    pRenderSurface->OsSurface.dwWidth            = pSurface.size;
+    pRenderSurface->OsSurface.OsResource         = surface.OsResource;
+    pRenderSurface->OsSurface.dwWidth            = surface.size;
     pRenderSurface->OsSurface.dwHeight           = 1;
-    pRenderSurface->OsSurface.dwPitch            = pSurface.size;
+    pRenderSurface->OsSurface.dwPitch            = surface.size;
     pRenderSurface->OsSurface.Format             = Format_RAW;
 
     return MOS_STATUS_SUCCESS;

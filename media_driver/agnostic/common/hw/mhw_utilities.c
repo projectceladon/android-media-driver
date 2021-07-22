@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2018, Intel Corporation
+* Copyright (c) 2014-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -64,8 +64,6 @@ MOS_STATUS Mhw_AddResourceToCmd_GfxAddress(
 
     pbCmdBufBase = (uint8_t*)pCmdBuffer->pCmdBase;
 
-    MOS_TraceEventExt(EVENT_RESOURCE_REGISTER, EVENT_TYPE_INFO2, &pParams->HwCommandType, sizeof(uint32_t), &pParams->dwLocationInCmd, sizeof(uint32_t));
-
     MHW_CHK_STATUS(pOsInterface->pfnRegisterResource(
         pOsInterface,
         pParams->presResource,
@@ -86,6 +84,13 @@ MOS_STATUS Mhw_AddResourceToCmd_GfxAddress(
     *pParams->pdwCmd = (*pParams->pdwCmd & ~dwMask) | (dwGfxAddrBottom & dwMask);
     // this is next DW for top part of the address
     *(pParams->pdwCmd + 1) = dwGfxAddrTop;
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    {
+        uint32_t evtData[4] ={(uint32_t)pParams->HwCommandType, pParams->dwLocationInCmd, pParams->dwOffset, pParams->dwSize};
+        MOS_TraceEventExt(EVENT_RESOURCE_REGISTER, EVENT_TYPE_INFO2, evtData, sizeof(evtData), &ui64GfxAddress, sizeof(ui64GfxAddress));
+    }
+#endif
 
     if (pParams->dwOffsetInSSH > 0)
     {
@@ -145,6 +150,21 @@ MOS_STATUS Mhw_AddResourceToCmd_GfxAddress(
         MHW_CHK_STATUS(pOsInterface->pfnSetPatchEntry(
             pOsInterface,
             &PatchEntryParams));
+    }
+
+    if (MOS_VEBOX_STATE             == pParams->HwCommandType   ||
+        MOS_VEBOX_DI_IECP           == pParams->HwCommandType   ||
+        MOS_VEBOX_TILING_CONVERT    == pParams->HwCommandType   ||
+        MOS_SFC_STATE               == pParams->HwCommandType   ||
+        MOS_STATE_BASE_ADDR         == pParams->HwCommandType   ||
+        MOS_SURFACE_STATE           == pParams->HwCommandType   ||
+        MOS_SURFACE_STATE_ADV       == pParams->HwCommandType   ||
+        MOS_MFX_PIPE_BUF_ADDR       == pParams->HwCommandType   ||
+        MOS_MFX_VP8_PIC             == pParams->HwCommandType   ||
+        MOS_MFX_BSP_BUF_BASE_ADDR   == pParams->HwCommandType)
+    {
+        HalOcaInterface::DumpResourceInfo(*pCmdBuffer, *pOsInterface, *pParams->presResource, pParams->HwCommandType,
+            pParams->dwLocationInCmd, pParams->dwOffset);
     }
 
 finish:

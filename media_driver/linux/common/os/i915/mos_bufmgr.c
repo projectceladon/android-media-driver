@@ -2470,6 +2470,8 @@ mos_gem_bo_clear_relocs(struct mos_linux_bo *bo, int start)
         struct mos_bo_gem *target_bo_gem = (struct mos_bo_gem *) bo_gem->reloc_target_info[i].bo;
         if (&target_bo_gem->bo != bo) {
             bo_gem->reloc_tree_fences -= target_bo_gem->reloc_tree_fences;
+            target_bo_gem->used_as_reloc_target = false;
+            target_bo_gem->reloc_count = 0;
             mos_gem_bo_unreference_locked_timed(&target_bo_gem->bo,
                                   time.tv_sec);
         }
@@ -2800,6 +2802,15 @@ skip_execution:
     return ret;
 }
 
+drm_export int
+do_exec3(struct mos_linux_bo **bo, int num_bo, struct mos_linux_context *ctx,
+     drm_clip_rect_t *cliprects, int num_cliprects, int DR4,
+     unsigned int flags, int *fence
+     )
+{
+    return 0;
+}
+
 static int
 mos_gem_bo_exec2(struct mos_linux_bo *bo, int used,
                drm_clip_rect_t *cliprects, int num_cliprects,
@@ -2831,6 +2842,15 @@ mos_gem_bo_context_exec2(struct mos_linux_bo *bo, int used, struct mos_linux_con
                            unsigned int flags, int *fence)
 {
     return do_exec2(bo, used, ctx, cliprects, num_cliprects, DR4,
+                        flags, fence);
+}
+
+int
+mos_gem_bo_context_exec3(struct mos_linux_bo **bo, int num_bo, struct mos_linux_context *ctx,
+                               struct drm_clip_rect *cliprects, int num_cliprects, int DR4,
+                               unsigned int flags, int *fence)
+{
+    return do_exec3(bo, num_bo, ctx, cliprects, num_cliprects, DR4,
                         flags, fence);
 }
 
@@ -4234,6 +4254,13 @@ fini:
     if (engines)
         free(engines);
     return ret;
+}
+
+int mos_set_context_param_parallel(struct mos_linux_context *ctx,
+                     struct i915_engine_class_instance *ci,
+                     unsigned int count)
+{
+    return 0;
 }
 
 int mos_set_context_param_load_balance(struct mos_linux_context *ctx,

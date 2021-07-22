@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2020, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -746,7 +746,8 @@ protected:
     {
         videoEncode, //!< Video encode
         videoDecode, //!< Video decode
-        videoProcess //!< Video processing
+        videoProcess,//!< Video processing
+        videoProtect //!< Video protection
     };
 
     enum EncodeFormat
@@ -770,15 +771,20 @@ protected:
         uint32_t        colorFormat;
     };
 
+#if VA_CHECK_VERSION(1, 10, 0)
+    static const uint32_t m_numEncRcMode = 10;
+#else
+    static const uint32_t m_numEncRcMode = 9;
+#endif
     static const uint16_t m_maxProfiles = 17; //!< Maximum number of supported profiles
     static const uint16_t m_maxProfileEntries = 64; //!< Maximum number of supported profile & entrypoint combinations
-    static const uint32_t m_numVpSurfaceAttr = 17; //!< Number of VP surface attributes
+    static const uint32_t m_numVpSurfaceAttr = 18; //!< Number of VP surface attributes
     static const uint32_t m_numJpegSurfaceAttr = 7; //!< Number of JPEG surface attributes
     static const uint32_t m_numJpegEncSurfaceAttr = 4; //!< Number of JPEG encode surface attributes
     static const uint16_t m_maxEntrypoints = 7; //!<  Maximum number of supported entrypoints
     static const uint32_t m_decSliceMode[2]; //!< Store 2 decode slices modes
     static const uint32_t m_decProcessMode[2]; //!< Store 2 decode process modes
-    static const uint32_t m_encRcMode[9]; //!< Store 9 encode rate control modes
+    static const uint32_t m_encRcMode[m_numEncRcMode]; //!< Store encode rate control modes
     static const uint32_t m_vpSurfaceAttr[m_numVpSurfaceAttr]; //!< Store the VP surface attributes
     static const uint32_t m_jpegSurfaceAttr[m_numJpegSurfaceAttr]; //!< Store the JPEG surface attributes
     static const uint32_t m_jpegEncSurfaceAttr[m_numJpegEncSurfaceAttr]; //!< Store the JPEG encode surface attributes

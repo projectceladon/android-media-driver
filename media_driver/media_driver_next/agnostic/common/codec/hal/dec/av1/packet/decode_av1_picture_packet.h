@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -76,6 +76,13 @@ namespace decode
         virtual MOS_STATUS Execute(MOS_COMMAND_BUFFER& cmdBuffer) = 0;
 
         //!
+        //! \brief  Init av1 state commands
+        //! \return MOS_STATUS
+        //!         MOS_STATUS_SUCCESS if success, else fail reason
+        //!
+        virtual MOS_STATUS InitAv1State(MOS_COMMAND_BUFFER& cmdBuffer) { return MOS_STATUS_SUCCESS; };
+
+        //!
         //! \brief  Calculate Command Size
         //!
         //! \param  [in, out] commandBufferSize
@@ -120,7 +127,6 @@ namespace decode
 
         virtual MOS_STATUS SetAvpPicStateParams(MhwVdboxAvpPicStateParams &picStateParams);
         virtual MOS_STATUS SetAvpInterPredStateParams(MhwVdboxAvpPicStateParams &picStateParams);
-        virtual MOS_STATUS SetInloopFilterStateParams(MhwVdboxAvpPicStateParams &picStateParams);
 
         //! \brief    Set Rowstore Cache offset
         //!

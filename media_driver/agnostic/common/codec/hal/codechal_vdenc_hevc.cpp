@@ -2045,6 +2045,7 @@ MOS_STATUS CodechalVdencHevcState::ExecutePictureLevel()
         m_brcEnabled,
         m_vdencStreamInEnabled,
         m_vdencNativeROIEnabled,
+        m_brcAdaptiveRegionBoostEnable,
         m_hevcVdencRoundingEnabled,
         panicEnabled,
         currentPass));
@@ -2652,8 +2653,21 @@ MOS_STATUS CodechalVdencHevcState::SetSequenceStructs()
         rowStoreParams.ucBitDepthMinus8 = m_hevcSeqParams->bit_depth_luma_minus8;
         rowStoreParams.ucLCUSize        = 1 << (m_hevcSeqParams->log2_max_coding_block_size_minus3 + 3);
         // VDEnc only support LCU64 for now
-        CODECHAL_ENCODE_ASSERT(rowStoreParams.ucLCUSize == MAX_LCU_SIZE);
+        if (rowStoreParams.ucLCUSize != MAX_LCU_SIZE)
+        {
+            CODECHAL_ENCODE_ASSERTMESSAGE("HEVC VDEnc only support LCU64 for now.");
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
         m_hwInterface->SetRowstoreCachingOffsets(&rowStoreParams);
+    }
+
+
+    if (m_hevcSeqParams->VBVBufferSizeInBit < m_hevcSeqParams->InitVBVBufferFullnessInBit)
+    {
+        CODECHAL_ENCODE_NORMALMESSAGE(
+            "VBVBufferSizeInBit is less than InitVBVBufferFullnessInBit, \
+            min(VBVBufferSizeInBit, InitVBVBufferFullnessInBit) will set to \
+            hucVdencBrcInitDmem->InitBufFull_U32 and hucVdencBrcUpdateDmem->TARGETSIZE_U32(except Low Delay BRC).\n");
     }
 
     m_lookaheadDepth = m_hevcSeqParams->LookaheadDepth;
@@ -2835,6 +2849,80 @@ MOS_STATUS CodechalVdencHevcState::SetPictureStructs()
     return eStatus;
 }
 
+MOS_STATUS CodechalVdencHevcState::SetupRegionBoosting(PMOS_RESOURCE vdencStreamIn, uint16_t boostIndex)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+    CODECHAL_ENCODE_CHK_NULL_RETURN(vdencStreamIn);
+
+    MOS_LOCK_PARAMS lockFlags;
+    MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
+    lockFlags.WriteOnly = 1;
+
+    uint8_t* data = (uint8_t*)m_osInterface->pfnLockResource(
+        m_osInterface,
+        vdencStreamIn,
+        &lockFlags);
+    CODECHAL_ENCODE_CHK_NULL_RETURN(data);
+
+    uint32_t streamInWidth = (MOS_ALIGN_CEIL(m_frameWidth, 64) / 32);
+    uint32_t streamInHeight = (MOS_ALIGN_CEIL(m_frameHeight, 64) / 32);
+    int32_t streamInNumCUs = streamInWidth * streamInHeight;
+
+    MOS_ZeroMemory(data, streamInNumCUs * 64);
+
+    MHW_VDBOX_VDENC_STREAMIN_STATE_PARAMS streaminDataParams;
+
+    MOS_ZeroMemory(&streaminDataParams, sizeof(streaminDataParams));
+    streaminDataParams.setQpRoiCtrl = true;
+    uint32_t roiCtrl = 85; // All four 16x16 blocks within the 32x32 blocks share the same region ID 1 (01010101).
+    for (uint16_t y = 0; y < streamInHeight; y++)
+    {
+        if ((y & 7) == boostIndex)
+        {
+            for (uint16_t x = 0; x < streamInWidth; x++)
+            {
+                streaminDataParams.roiCtrl = 85;
+                SetStreaminDataPerRegion(streamInWidth, y, y+1, x, x+1, &streaminDataParams, data);
+            }
+        }
+    }
+
+    MOS_ZeroMemory(&streaminDataParams, sizeof(streaminDataParams));
+    streaminDataParams.maxTuSize = 3;    //Maximum TU Size allowed, restriction to be set to 3
+    streaminDataParams.maxCuSize = 2;    //For ARB, currently support 32x32 block
+    switch (m_hevcSeqParams->TargetUsage)
+    {
+    case 1:
+    case 4:
+        streaminDataParams.numMergeCandidateCu64x64 = 4;
+        streaminDataParams.numMergeCandidateCu32x32 = 3;
+        streaminDataParams.numMergeCandidateCu16x16 = 2;
+        streaminDataParams.numMergeCandidateCu8x8   = 1;
+        streaminDataParams.numImePredictors         = m_imgStateImePredictors;
+        break;
+    case 7:
+        streaminDataParams.numMergeCandidateCu64x64 = 2;
+        streaminDataParams.numMergeCandidateCu32x32 = 2;
+        streaminDataParams.numMergeCandidateCu16x16 = 2;
+        streaminDataParams.numMergeCandidateCu8x8   = 0;
+        streaminDataParams.numImePredictors         = 4;
+        break;
+    }
+
+    for (auto i = 0; i < streamInNumCUs; i++)
+    {
+        SetStreaminDataPerLcu(&streaminDataParams, data + (i * 64));
+    }
+
+    m_osInterface->pfnUnlockResource(
+        m_osInterface,
+        vdencStreamIn);
+
+    return eStatus;
+}
+
 MOS_STATUS CodechalVdencHevcState::PrepareVDEncStreamInData()
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
@@ -2844,7 +2932,18 @@ MOS_STATUS CodechalVdencHevcState::PrepareVDEncStreamInData()
     if (m_vdencStreamInEnabled && m_encodeParams.bMbQpDataEnabled)
         CODECHAL_ENCODE_CHK_STATUS_RETURN(SetupMbQpStreamIn(&m_resVdencStreamInBuffer[m_currRecycledBufIdx]));
 
-    if (m_vdencStreamInEnabled && m_hevcPicParams->NumROI)
+    if (m_brcAdaptiveRegionBoostSupported && m_hevcPicParams->TargetFrameSize && !m_lookaheadDepth)
+    {
+        // Adaptive region boost is enabled for TCBRC only
+        m_brcAdaptiveRegionBoostEnable = true;
+        m_vdencStreamInEnabled         = true;
+    }
+    else
+    {
+        m_brcAdaptiveRegionBoostEnable = false;
+    }
+
+    if (!m_brcAdaptiveRegionBoostEnable && m_vdencStreamInEnabled && m_hevcPicParams->NumROI)
     {
         ProcessRoiDeltaQp();
 
@@ -2859,10 +2958,18 @@ MOS_STATUS CodechalVdencHevcState::PrepareVDEncStreamInData()
             CODECHAL_ENCODE_CHK_STATUS_RETURN(SetupROIStreamIn(&(m_resVdencStreamInBuffer[m_currRecycledBufIdx])));
         }
     }
-    else if (m_vdencStreamInEnabled && (m_hevcPicParams->NumDirtyRects > 0 && (B_TYPE == m_hevcPicParams->CodingType)))
+    else if (!m_brcAdaptiveRegionBoostEnable && m_vdencStreamInEnabled && (m_hevcPicParams->NumDirtyRects > 0 && (B_TYPE == m_hevcPicParams->CodingType)))
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(SetupDirtyRectStreamIn(&(m_resVdencStreamInBuffer[m_currRecycledBufIdx])));
     }
+
+    if (m_brcAdaptiveRegionBoostEnable)
+    {
+        uint16_t rowOffset[8] = {0, 3, 5, 2, 7, 4, 1, 6};
+        uint16_t circularFrameIdx = (m_storeData - 1) & 7;
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(SetupRegionBoosting(&(m_resVdencStreamInBuffer[m_currRecycledBufIdx]), rowOffset[circularFrameIdx]));
+    }
+
     return eStatus;
 }
 
@@ -3810,14 +3917,6 @@ MOS_STATUS CodechalVdencHevcState::PrepareHWMetaData(
     MOS_ZeroMemory(&storeDataParams, sizeof(storeDataParams));
     storeDataParams.pOsResource         = presMetadataBuffer;
     storeDataParams.dwResourceOffset    = m_metaDataOffset.dwEncodeErrorFlags;
-    storeDataParams.dwValue             = 0;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreDataImmCmd(cmdBuffer, &storeDataParams));
-
-    storeDataParams.dwResourceOffset    = m_metaDataOffset.dwReferencePicturesMotionResultsBitMask;
-    storeDataParams.dwValue             = 0;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreDataImmCmd(cmdBuffer, &storeDataParams));
-
-    storeDataParams.dwResourceOffset    = m_metaDataOffset.dwReconstructedPictureWrittenBytesCount;
     storeDataParams.dwValue             = 0;
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreDataImmCmd(cmdBuffer, &storeDataParams));
 

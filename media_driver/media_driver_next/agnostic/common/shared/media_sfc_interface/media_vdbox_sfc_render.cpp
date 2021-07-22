@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -50,7 +50,10 @@ void MediaVdboxSfcRender::Destroy()
     MOS_Delete(m_scalingFilter);
     MOS_Delete(m_rotMirFilter);
     MOS_Delete(m_allocator);
-    MOS_Delete(m_mmc);
+    if (m_isMmcAllocated)
+    {
+        MOS_Delete(m_mmc);
+    }
 }
 
 //!
@@ -59,15 +62,26 @@ void MediaVdboxSfcRender::Destroy()
 //! \return   MOS_STATUS
 //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
 //!
-MOS_STATUS MediaVdboxSfcRender::Initialize(VP_MHWINTERFACE &vpMhwinterface)
+MOS_STATUS MediaVdboxSfcRender::Initialize(VP_MHWINTERFACE &vpMhwinterface, MediaMemComp *mmc)
 {
     VP_PUBLIC_CHK_NULL_RETURN(vpMhwinterface.m_vpPlatformInterface);
     VP_PUBLIC_CHK_NULL_RETURN(vpMhwinterface.m_osInterface);
 
     m_vpMhwInterface    = vpMhwinterface;
     m_osInterface       = m_vpMhwInterface.m_osInterface;
-    m_mmc               = MOS_New(VPMediaMemComp, m_osInterface, &m_vpMhwInterface);
-    VP_PUBLIC_CHK_NULL_RETURN(m_mmc);
+
+    if (mmc)
+    {
+        m_mmc = mmc;
+        m_isMmcAllocated = false;
+    }
+    else
+    {
+        m_mmc = MOS_New(VPMediaMemComp, m_osInterface, m_vpMhwInterface);
+        VP_PUBLIC_CHK_NULL_RETURN(m_mmc);
+        m_isMmcAllocated = true;
+    }
+
     m_allocator         = MOS_New(VpAllocator, m_osInterface, m_mmc);
     VP_PUBLIC_CHK_NULL_RETURN(m_allocator);
     m_cscFilter         = MOS_New(VpCscFilter, &m_vpMhwInterface);
@@ -89,10 +103,10 @@ MOS_STATUS MediaVdboxSfcRender::SetCSCParams(VDBOX_SFC_PARAMS &sfcParam, VP_EXEC
     cscParams.type                  = FeatureTypeCscOnSfc;
     cscParams.formatInput           = sfcParam.input.format;
     cscParams.formatOutput          = sfcParam.output.surface->Format;
-    cscParams.colorSpaceInput       = sfcParam.input.colorSpace;
-    cscParams.colorSpaceOutput      = sfcParam.output.colorSpace;
-    cscParams.chromaSitingInput     = sfcParam.input.chromaSiting;
-    cscParams.chromaSitingOutput    = sfcParam.output.chromaSiting;
+    cscParams.input.colorSpace      = sfcParam.input.colorSpace;
+    cscParams.output.colorSpace     = sfcParam.output.colorSpace;
+    cscParams.input.chromaSiting    = sfcParam.input.chromaSiting;
+    cscParams.output.chromaSiting   = sfcParam.output.chromaSiting;
 
     m_cscFilter->Init();
     m_cscFilter->SetExecuteEngineCaps(cscParams, vpExecuteCaps);
@@ -112,32 +126,32 @@ MOS_STATUS MediaVdboxSfcRender::SetScalingParams(VDBOX_SFC_PARAMS &sfcParam, VP_
     scalingParams.type                      = FeatureTypeScalingOnSfc;
     scalingParams.formatInput               = sfcParam.input.format;
     scalingParams.formatOutput              = sfcParam.output.surface->Format;
-    scalingParams.scalingMode               = VPHAL_SCALING_AVS;
+    scalingParams.scalingMode               = GetScalingMode(sfcParam.scalingMode);
     scalingParams.scalingPreference         = VPHAL_SCALING_PREFER_SFC;              //!< DDI indicate Scaling preference
     scalingParams.bDirectionalScalar        = false;                                 //!< Vebox Directional Scalar
-    scalingParams.rcSrcInput                = rcSrcInput;                            //!< No input crop support for VD mode. rcSrcInput must have same width/height of input image.
-    scalingParams.rcDstInput                = sfcParam.output.rcDst;
-    scalingParams.rcMaxSrcInput             = rcSrcInput;
-    scalingParams.dwWidthInput              = sfcParam.input.width;
-    scalingParams.dwHeightInput             = sfcParam.input.height;
-    scalingParams.rcSrcOutput               = rcOutput;
-    scalingParams.rcDstOutput               = rcOutput;
-    scalingParams.rcMaxSrcOutput            = rcOutput;
-    scalingParams.dwWidthOutput             = sfcParam.output.surface->dwWidth;
-    scalingParams.dwHeightOutput            = sfcParam.output.surface->dwHeight;
+    scalingParams.input.rcSrc               = rcSrcInput;                            //!< No input crop support for VD mode. rcSrcInput must have same width/height of input image.
+    scalingParams.input.rcDst               = sfcParam.output.rcDst;
+    scalingParams.input.rcMaxSrc            = rcSrcInput;
+    scalingParams.input.dwWidth             = sfcParam.input.width;
+    scalingParams.input.dwHeight            = sfcParam.input.height;
+    scalingParams.output.rcSrc              = rcOutput;
+    scalingParams.output.rcDst              = rcOutput;
+    scalingParams.output.rcMaxSrc           = rcOutput;
+    scalingParams.output.dwWidth            = sfcParam.output.surface->dwWidth;
+    scalingParams.output.dwHeight           = sfcParam.output.surface->dwHeight;
     scalingParams.pColorFillParams          = nullptr;
     scalingParams.pCompAlpha                = nullptr;
-    scalingParams.colorSpaceOutput          = sfcParam.output.colorSpace;
+    scalingParams.csc.colorSpaceOutput      = sfcParam.output.colorSpace;
     scalingParams.interlacedScalingType     = sfcParam.videoParams.fieldParams.isFieldToInterleaved ? ISCALING_FIELD_TO_INTERLEAVED : ISCALING_NONE;
     if (sfcParam.videoParams.fieldParams.isFieldToInterleaved)
     {
-        scalingParams.srcSampleType         = sfcParam.videoParams.fieldParams.isBottomField ? SAMPLE_SINGLE_BOTTOM_FIELD : SAMPLE_SINGLE_TOP_FIELD;
-        scalingParams.dstSampleType         = sfcParam.videoParams.fieldParams.isBottomFirst ? SAMPLE_INTERLEAVED_ODD_FIRST_BOTTOM_FIELD : SAMPLE_INTERLEAVED_EVEN_FIRST_TOP_FIELD;
+        scalingParams.input.sampleType      = sfcParam.videoParams.fieldParams.isBottomField ? SAMPLE_SINGLE_BOTTOM_FIELD : SAMPLE_SINGLE_TOP_FIELD;
+        scalingParams.output.sampleType     = sfcParam.videoParams.fieldParams.isBottomFirst ? SAMPLE_INTERLEAVED_ODD_FIRST_BOTTOM_FIELD : SAMPLE_INTERLEAVED_EVEN_FIRST_TOP_FIELD;
     }
     else
     {
-        scalingParams.srcSampleType         = SAMPLE_PROGRESSIVE;
-        scalingParams.dstSampleType         = SAMPLE_PROGRESSIVE;
+        scalingParams.input.sampleType      = SAMPLE_PROGRESSIVE;
+        scalingParams.output.sampleType     = SAMPLE_PROGRESSIVE;
     }
 
     m_scalingFilter->Init(sfcParam.videoParams.codecStandard, sfcParam.videoParams.jpeg.jpegChromaType);
@@ -145,6 +159,14 @@ MOS_STATUS MediaVdboxSfcRender::SetScalingParams(VDBOX_SFC_PARAMS &sfcParam, VP_
     m_scalingFilter->CalculateEngineParams();
 
     return m_sfcRender->SetScalingParams(m_scalingFilter->GetSfcParams());
+}
+
+MOS_STATUS MediaVdboxSfcRender::SetSfcMmcParams(VDBOX_SFC_PARAMS &sfcParam)
+{
+    VP_PUBLIC_CHK_STATUS_RETURN(m_mmc->SetSurfaceMmcState(sfcParam.output.surface));
+    VP_PUBLIC_CHK_STATUS_RETURN(m_mmc->SetSurfaceMmcMode(sfcParam.output.surface));
+    VP_PUBLIC_CHK_STATUS_RETURN(m_mmc->SetSurfaceMmcFormat(sfcParam.output.surface));
+    return m_sfcRender->SetMmcParams(sfcParam.output.surface, true, m_mmc->IsMmcEnabled());
 }
 
 MOS_STATUS MediaVdboxSfcRender::SetRotMirParams(VDBOX_SFC_PARAMS &sfcParam, VP_EXECUTE_CAPS &vpExecuteCaps)
@@ -156,7 +178,7 @@ MOS_STATUS MediaVdboxSfcRender::SetRotMirParams(VDBOX_SFC_PARAMS &sfcParam, VP_E
     rotMirParams.formatInput            = sfcParam.input.format;
     rotMirParams.formatOutput           = sfcParam.output.surface->Format;
     rotMirParams.rotation               = sfcParam.input.mirrorEnabled ? VPHAL_MIRROR_HORIZONTAL : VPHAL_ROTATION_IDENTITY;
-    rotMirParams.tileOutput             = sfcParam.output.surface->TileType;
+    rotMirParams.surfInfo.tileOutput    = sfcParam.output.surface->TileType;
 
     m_rotMirFilter->Init();
     m_rotMirFilter->SetExecuteEngineCaps(rotMirParams, vpExecuteCaps);
@@ -187,6 +209,7 @@ MOS_STATUS MediaVdboxSfcRender::AddSfcStates(MOS_COMMAND_BUFFER *cmdBuffer, VDBO
     VP_PUBLIC_CHK_STATUS_RETURN(SetScalingParams(sfcParam, vpExecuteCaps));
     VP_PUBLIC_CHK_STATUS_RETURN(SetRotMirParams(sfcParam, vpExecuteCaps));
     VP_PUBLIC_CHK_STATUS_RETURN(SetHistogramParams(sfcParam));
+    VP_PUBLIC_CHK_STATUS_RETURN(SetSfcMmcParams(sfcParam));
 
     RECT        rcOutput        = {0, 0, (int32_t)sfcParam.output.surface->dwWidth, (int32_t)sfcParam.output.surface->dwHeight};
     // The value of plane offset are different between vp and codec. updatePlaneOffset need be set to true when create vp surface
@@ -209,8 +232,30 @@ MOS_STATUS MediaVdboxSfcRender::AddSfcStates(MOS_COMMAND_BUFFER *cmdBuffer, VDBO
                             cmdBuffer));
 
     m_allocator->DestroyVpSurface(renderTarget);
+    m_allocator->CleanRecycler(); 
 
     return MOS_STATUS_SUCCESS;
+}
+
+VPHAL_SCALING_MODE MediaVdboxSfcRender::GetScalingMode(CODECHAL_SCALING_MODE scalingMode)
+{
+    // Default mode is VPHAL_SCALING_AVS
+    VPHAL_SCALING_MODE sfcScalingMode = VPHAL_SCALING_AVS;
+
+    switch(scalingMode)
+    {
+    case CODECHAL_SCALING_BILINEAR:
+        sfcScalingMode = VPHAL_SCALING_BILINEAR;
+        break;
+    case CODECHAL_SCALING_NEAREST:
+    case CODECHAL_SCALING_AVS:
+    case CODECHAL_SCALING_ADV_QUALITY:
+    default:
+        sfcScalingMode = VPHAL_SCALING_AVS;
+        break;
+    }
+
+    return sfcScalingMode;
 }
 
 bool MediaVdboxSfcRender::IsVdboxSfcFormatSupported(

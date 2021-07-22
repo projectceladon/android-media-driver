@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2020, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -346,7 +346,7 @@ MOS_STATUS VPHAL_VEBOX_STATE::Initialize(
     pVeboxState->SetRenderDisableFlag( pSettings->disableDnDi == false ? false : true );
 
     // Enable/Disable kernel Copy/Update for VEBox
-    pVeboxState->dwKernelUpdate       = pSettings->kernelUpdate;
+    pVeboxState->dwKernelUpdate = pSettings->kernelUpdate;
 
     // Setup Same Sample Threshold for VEBOX
     pVeboxState->iSameSampleThreshold = pSettings->sameSampleThreshold;
@@ -4348,12 +4348,25 @@ MOS_STATUS VpHal_RndrRenderVebox(
         rcTemp = pcRenderParams->pTarget[0]->rcDst;
         rcTempIn = pcRenderParams->pSrc[0]->rcDst;
         if (pVeboxState->m_sfcPipeState && pVeboxState->m_sfcPipeState->m_bSFC2Pass)
-        { //SFC 2 pass, there is the first pass's surface;
+        {
+            if (0 == pRenderData->fScaleX || 0 == pRenderData->fScaleY)
+            {
+                VPHAL_RENDER_ASSERTMESSAGE("Invalid scaling ratio in pRenderData during SFC 2 pass scaling!");
+            }
+
+            //SFC 2 pass, here is the output surface of first pass.
             float                    TempfScaleX = 1.0;
             float                    TempfScaleY = 1.0;
             if ((pRenderData->fScaleX >= 0.0625F) && (pRenderData->fScaleX < 0.125F))
             {
-                TempfScaleX = 0.5F;
+                if (pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    TempfScaleX = 0.125F;
+                }
+                else
+                {
+                    TempfScaleX = 0.5F;
+                }
             }
             else if ((pRenderData->fScaleX > 8.0F) && (pRenderData->fScaleX <= 16.0F))
             {
@@ -4362,7 +4375,14 @@ MOS_STATUS VpHal_RndrRenderVebox(
 
             if ((pRenderData->fScaleY >= 0.0625F) && (pRenderData->fScaleY < 0.125F))
             {
-                TempfScaleY = 0.5F;
+                if (pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    TempfScaleY = 0.125F;
+                }
+                else
+                {
+                    TempfScaleY = 0.5F;
+                }
             }
             else if ((pRenderData->fScaleY > 8.0F) && (pRenderData->fScaleY <= 16.0F))
             {
@@ -4375,25 +4395,61 @@ MOS_STATUS VpHal_RndrRenderVebox(
                 pInSurface->Rotation == VPHAL_MIRROR_HORIZONTAL ||
                 pInSurface->Rotation == VPHAL_MIRROR_VERTICAL)
             {
-                rcTempOut.right  = (long)((pInSurface->rcSrc.right - pInSurface->rcSrc.left) * TempfScaleX);
-                rcTempOut.bottom = (long)((pInSurface->rcSrc.bottom - pInSurface->rcSrc.top) * TempfScaleY);
+                if ((TempfScaleX == 1.0F) && pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    rcTempOut.right = pInSurface->rcDst.right - pInSurface->rcDst.left;
+                }
+                else
+                {
+                    rcTempOut.right  = (long)((pInSurface->rcSrc.right - pInSurface->rcSrc.left) * TempfScaleX);
+                }
+                if ((TempfScaleY == 1.0F) && pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    rcTempOut.bottom = pInSurface->rcDst.bottom - pInSurface->rcDst.top;
+                }
+                else
+                {
+                    rcTempOut.bottom = (long)((pInSurface->rcSrc.bottom - pInSurface->rcSrc.top) * TempfScaleY);
+                }
             }
             else
             {
-                rcTempOut.bottom = (long)((pInSurface->rcSrc.right - pInSurface->rcSrc.left) * TempfScaleX);
-                rcTempOut.right = (long)((pInSurface->rcSrc.bottom - pInSurface->rcSrc.top) * TempfScaleY);
+                if ((TempfScaleX == 1.0F) && pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    rcTempOut.bottom = pInSurface->rcDst.right - pInSurface->rcDst.left;
+                }
+                else
+                {
+                    rcTempOut.bottom = (long)((pInSurface->rcSrc.right - pInSurface->rcSrc.left) * TempfScaleX);
+                }
+                if ((TempfScaleY == 1.0F) && pVeboxState->m_sfcPipeState->m_bSFC2PassPerfMode)
+                {
+                    rcTempOut.right = pInSurface->rcDst.bottom - pInSurface->rcDst.top;
+                }
+                else
+                {
+                    rcTempOut.right = (long)((pInSurface->rcSrc.bottom - pInSurface->rcSrc.top) * TempfScaleY);
+                }
+            }
+
+            VPHAL_RENDER_NORMALMESSAGE("x scaling ratio %f, y %f, 1st pass sfc scaling ratio %f",
+              pRenderData->fScaleX, pRenderData->fScaleY, TempfScaleX);
+        }
+
+        if (pVeboxState->m_sfcPipeState && (pRenderPassData->bSFCScalingOnly || pVeboxState->m_sfcPipeState->m_bSFC2Pass))
+        {
+            if (pRenderPassData->bSFCScalingOnly && !pVeboxState->m_sfcPipeState->m_bSFC2Pass)
+            {
+                rcTempOut.right   = (long)((pInSurface->rcDst.right - pInSurface->rcDst.left));
+                rcTempOut.bottom  = (long)((pInSurface->rcDst.bottom - pInSurface->rcDst.top));
             }
 
             pOutSurface->rcDst    = rcTempOut;
             pOutSurface->rcSrc    = rcTempOut;
             pOutSurface->dwWidth  = rcTempOut.right;
             pOutSurface->dwHeight = rcTempOut.bottom;
-            pInSurface->rcDst = rcTempOut;
-            VPHAL_RENDER_NORMALMESSAGE("x scaling ratio %f, y %f, 1st pass sfc scaling ratio %f",
-              pRenderData->fScaleX, pRenderData->fScaleY, TempfScaleX);
-        }
-        if (pVeboxState->m_sfcPipeState && (pRenderPassData->bSFCScalingOnly || pVeboxState->m_sfcPipeState->m_bSFC2Pass))
-        {
+            pInSurface->rcDst     = rcTempOut;
+
             VPHAL_RENDER_CHK_STATUS(pVeboxState->AllocateSfcTempSurfaces(pRenderer, pcRenderParams, pRenderData, pInSurface, pOutSurface));
             pOutSurface = &pVeboxState->SfcTempSurface;
             // Reset rendering flags for SFC since output surface changed
@@ -4428,10 +4484,8 @@ MOS_STATUS VpHal_RndrRenderVebox(
                                                 pcRenderParams,
                                                 pRenderPassData))
 
-        //SFC second pass
-        if (pVeboxState->m_sfcPipeState && pVeboxState->m_sfcPipeState->m_bSFC2Pass)
+        if (pVeboxState->m_sfcPipeState && (pRenderPassData->bSFCScalingOnly || pVeboxState->m_sfcPipeState->m_bSFC2Pass))
         {
-            pVeboxState->m_sfcPipeState->m_bSFC2Pass = false;
             pInSurface = &pVeboxState->SfcTempSurface;
             pInSurface->rcMaxSrc = pInSurface->rcSrc;
             pInSurface->rcDst    = rcTempIn;
@@ -4447,8 +4501,13 @@ MOS_STATUS VpHal_RndrRenderVebox(
             pOutSurface = pcRenderParams->pTarget[0];
             pRenderData->pRenderTarget = pOutSurface;
             pRenderPassData->pSrcSurface = pInSurface;
+        }
 
+        //SFC second pass
+        if (pVeboxState->m_sfcPipeState && pVeboxState->m_sfcPipeState->m_bSFC2Pass)
+        {
             // Second time vebox rending for scaling / colorfill/rotation on SFC, disable all other features
+            pVeboxState->m_sfcPipeState->m_bSFC2Pass = false;
             pRenderData->bDenoise = false;
             pRenderData->bDeinterlace = false;
             pRenderData->bQueryVariance = false;

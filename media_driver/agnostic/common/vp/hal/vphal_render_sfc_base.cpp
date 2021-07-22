@@ -901,7 +901,8 @@ finish:
 void VphalSfcState::GetOutputWidthHeightAlignUnit(
     MOS_FORMAT              outputFormat,
     uint16_t                &widthAlignUnit,
-    uint16_t                &heightAlignUnit)
+    uint16_t                &heightAlignUnit,
+    bool                    isInterlacedScaling)
 {
     widthAlignUnit  = 1;
     heightAlignUnit = 1;
@@ -1074,7 +1075,8 @@ MOS_STATUS VphalSfcState::SetSfcStateParams(
     GetOutputWidthHeightAlignUnit(
         pSfcStateParams->OutputFrameFormat,
         wOutputWidthAlignUnit,
-        wOutputHeightAlignUnit);
+        wOutputHeightAlignUnit,
+        pSrcSurface->bInterlacedScaling);
 
     // Apply alignment restriction to Region of the input frame.
     GetInputWidthHeightAlignUnit(
@@ -1135,7 +1137,7 @@ MOS_STATUS VphalSfcState::SetSfcStateParams(
     // in either direction. We must check for this before clamping the SF.
     if (IS_YUV_FORMAT(m_renderData.SfcInputFormat) &&
         (m_renderData.fScaleX > 1.0F               ||
-         m_renderData.fScaleY > 1.0F))
+        m_renderData.fScaleY > 1.0F))
     {
         pSfcStateParams->bBypassXAdaptiveFilter = false;
         pSfcStateParams->bBypassYAdaptiveFilter = false;
@@ -1211,7 +1213,7 @@ MOS_STATUS VphalSfcState::SetSfcStateParams(
             m_colorFillRTCspace    = dst_cspace;
         }
 
-        if (IS_YUV_FORMAT(pOutSurface->Format) || (pOutSurface->Format == Format_AYUV))
+        if (IS_YUV_FORMAT(pOutSurface->Format) || IS_ALPHA_YUV_FORMAT(pOutSurface->Format))
         {
             pSfcStateParams->fColorFillYRPixel = (float)m_colorFillColorDst.Y / 255.0F;
             pSfcStateParams->fColorFillUGPixel = (float)m_colorFillColorDst.U / 255.0F;

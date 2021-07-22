@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -39,6 +39,9 @@
 #include <va/va_enc_hevc.h>
 #include <va/va_vpp.h>
 #include <va/va_backend_vpp.h>
+#if VA_CHECK_VERSION(1,11,0)
+#include <va/va_backend_prot.h>
+#endif
 #ifdef ANDROID
 #if VA_MAJOR_VERSION < 1
 #include "va_internal_android.h"
@@ -62,11 +65,14 @@
 #endif
 #define DDI_CODEC_GEN_MAX_ATTRIBS_TYPE             4    //VAConfigAttribRTFormat,    VAConfigAttribRateControl,    VAConfigAttribDecSliceMode,    VAConfigAttribEncPackedHeaders
 
-#define DDI_CODEC_GEN_MAX_SURFACE_ATTRIBUTES       24
+#define DDI_CODEC_GEN_MAX_SURFACE_ATTRIBUTES       25
 #define DDI_CODEC_GEN_STR_VENDOR                   "Intel iHD driver for Intel(R) Gen Graphics - " MEDIA_VERSION " (" MEDIA_VERSION_DETAILS ")"
 
 #define DDI_CODEC_GET_VTABLE(ctx)                  (ctx->vtable)
 #define DDI_CODEC_GET_VTABLE_VPP(ctx)              (ctx->vtable_vpp)
+#if VA_CHECK_VERSION(1,11,0)
+#define DDI_CODEC_GET_VTABLE_PROT(ctx)             (ctx->vtable_prot)
+#endif
 #define DDI_CODEC_GET_VTABLE_TPI(ctx)              (ctx->vtable_tpi)
 
 #define DDI_CODEC_BATCH_BUFFER_SIZE                0x80000
@@ -336,6 +342,24 @@ VAStatus DdiMedia_UnmapBuffer (
     VADriverContextP    ctx,
     VABufferID          buf_id
 );
+
+
+//!
+//! \brief  Destroy buffer
+//!
+//! \param  [in] ctx
+//!         Pointer to VA driver context
+//! \param  [in] buffer_id
+//!         VA buffer ID
+//!
+//! \return     VAStatus
+//!     VA_STATUS_SUCCESS if success, else fail reason
+//!
+VAStatus DdiMedia_DestroyBuffer (
+    VADriverContextP    ctx,
+    VABufferID          buffer_id
+);
+
 
 #ifdef __cplusplus
 extern "C" {

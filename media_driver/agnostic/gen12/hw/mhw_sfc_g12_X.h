@@ -50,6 +50,8 @@ struct MHW_SFC_STATE_PARAMS_G12: public MHW_SFC_STATE_PARAMS
     // Histogram stream out
     PMOS_SURFACE                    histogramSurface;                    //!< Histogram stream out buffer
     // Row Store and Column Store Scratch buffer
+    PMOS_RESOURCE                   resAvsLineBuffer;                        // AVS Row Store buffer used by SFC
+    PMOS_RESOURCE                   resIefLineBuffer;                        // IEF Row Store buffer used by SFC
     PMOS_RESOURCE                   resSfdLineBuffer;                        // SFD Row Store buffer used by SFC
     PMOS_RESOURCE                   resAvsLineTileBuffer;                    // AVS Column Store buffer used by SFC
     PMOS_RESOURCE                   resIefLineTileBuffer;                    // IEF Column Store buffer used by SFC
@@ -127,8 +129,7 @@ public:
         LCU_16_16_HEVC = 0,
         LCU_32_32_HEVC = 1,
         LCU_64_64_HEVC = 2,
-        LCU_64_64_VP9 = 3,
-        LCU_64_64_VP9_ENC = 4
+        LCU_64_64_VP9 =  3 // should use 3 for VP9
     };
 
     #define PATCH_LIST_COMMAND(x) (x##_NUMBER_OF_ADDRESSES)

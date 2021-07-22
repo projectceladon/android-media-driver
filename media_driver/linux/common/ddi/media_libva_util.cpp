@@ -585,6 +585,8 @@ VAStatus DdiMediaUtil_AllocateSurface(
             mediaSurface->isTiled          = (tileformat != I915_TILING_NONE) ? 1 : 0;
             mediaSurface->pData            = (uint8_t*) bo->virt;
             DDI_VERBOSEMESSAGE("Allocate external surface %7d bytes (%d x %d resource).", mediaSurface->pSurfDesc->uiSize, width, height);
+            uint32_t event[] = {bo->handle, format, width, height, pitch, bo->size, tileformat, cpTag};
+            MOS_TraceEventExt(EVENT_VA_SURFACE, EVENT_TYPE_INFO, event, sizeof(event), &gmmResourceInfo->GetResFlags(), sizeof(GMM_RESOURCE_FLAG));
         }
         else
         {
@@ -1388,25 +1390,17 @@ void DdiMediaUtil_FreeSurface(DDI_MEDIA_SURFACE *surface)
         surface->pMediaCtx->m_auxTableMgr->UnmapResource(surface->pGmmResourceInfo, surface->bo);
     }
 
-    // For External Buffer, only needs to destory SurfaceDescriptor
-    if ( DdiMediaUtil_IsExternalSurface(surface) )
+    if(surface->bMapped)
     {
-        // In DdiMediaUtil_AllocateSurface call, driver will increase the surface reference count by calling drm_intel_bo_gem_create_from_name
-        // Thus, when freeing the surface, the drm_intel_bo_unreference function should be called to avoid memory leak
-        mos_bo_unreference(surface->bo);
+        DdiMediaUtil_UnlockSurface(surface);
+        DDI_VERBOSEMESSAGE("DDI: try to free a locked surface.");
+    }
+    mos_bo_unreference(surface->bo);
+    // For External Buffer, only needs to destory SurfaceDescriptor
+    if (surface->pSurfDesc)
+    {
         MOS_FreeMemory(surface->pSurfDesc);
         surface->pSurfDesc = nullptr;
-    }
-    else
-    {
-        // calling sequence checking
-        if (surface->bMapped)
-        {
-            DdiMediaUtil_UnlockSurface(surface);
-            DDI_VERBOSEMESSAGE("DDI: try to free a locked surface.");
-        }
-        mos_bo_unreference(surface->bo);
-        surface->bo = nullptr;
     }
 
     if (nullptr != surface->pGmmResourceInfo)
@@ -1813,5 +1807,39 @@ VAStatus DdiMediaUtil_UnRegisterRTSurfaces(
         DdiMediaUtil_UnLockMutex(&mediaCtx->EncoderMutex);
     }
 
+    return VA_STATUS_SUCCESS;
+}
+
+VAStatus DdiMediaUtil_SetMediaResetEnableFlag(PDDI_MEDIA_CONTEXT mediaCtx)
+{
+    DDI_CHK_NULL(mediaCtx,"nullptr mediaCtx!", VA_STATUS_ERROR_INVALID_CONTEXT);
+    
+    if(!MEDIA_IS_SKU(&mediaCtx->SkuTable, FtrSWMediaReset))
+    {
+        mediaCtx->bMediaResetEnable = false;
+        return VA_STATUS_SUCCESS;
+    }
+
+    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
+    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
+    MOS_USER_FEATURE_INVALID_KEY_ASSERT(
+        MOS_UserFeature_ReadValue_ID(nullptr,
+                                     __MEDIA_USER_FEATURE_VALUE_MEDIA_RESET_ENABLE_ID,
+                                     &userFeatureData,
+                                     nullptr));
+    mediaCtx->bMediaResetEnable = userFeatureData.i32Data ? true : false;
+    if(mediaCtx->bMediaResetEnable)
+    {
+        return VA_STATUS_SUCCESS;
+    }
+
+    char* mediaResetEnv = getenv("INTEL_MEDIA_RESET_WATCHDOG");
+    if(!mediaResetEnv)
+    {
+        mediaCtx->bMediaResetEnable = false;
+        return VA_STATUS_SUCCESS;
+    }
+
+    mediaCtx->bMediaResetEnable = strcmp(mediaResetEnv, "1") ? false : true;
     return VA_STATUS_SUCCESS;
 }

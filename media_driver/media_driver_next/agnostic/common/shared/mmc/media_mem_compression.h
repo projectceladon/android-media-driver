@@ -1,5 +1,5 @@
 ﻿/*
-* Copyright (c) 2018, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -71,6 +71,12 @@ public:
         PMOS_SURFACE surface);
 
     //!
+    //! \brief    SetSurfaceMmcFormat
+    //!
+    virtual MOS_STATUS SetSurfaceMmcFormat(
+        PMOS_SURFACE surface);
+
+    //!
     //! \brief    GetSurfaceMmcState
     //!
     virtual MOS_STATUS GetSurfaceMmcState(
@@ -102,6 +108,11 @@ public:
     //! \brief    InitMmcEnabled
     //!
     MOS_STATUS InitMmcEnabled();
+
+    //!
+    //! \brief    Decompress Resources
+    //!
+    MOS_STATUS DecompressResource(PMOS_RESOURCE resource);
 
 protected:
     //!

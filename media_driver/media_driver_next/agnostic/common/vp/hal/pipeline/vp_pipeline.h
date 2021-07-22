@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -37,6 +37,7 @@
 #include "vp_status_report.h"
 #include "vphal.h"
 #include "vp_dumper.h"
+#include "vp_debug_interface.h"
 #include "vp_feature_manager.h"
 #include "vp_packet_shared_context.h"
 #include "vp_kernelset.h"
@@ -116,6 +117,15 @@ public:
     virtual MOS_STATUS Destroy() override;
 
     //!
+    //! \brief  Destory the tempSurface and release internal resources
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+#if (_DEBUG || _RELEASE_INTERNAL)
+    MOS_STATUS DestroySurface();
+#endif
+
+    //!
     //! \brief  get Status Report Table
     //! \return PVPHAL_STATUS_TABLE
     //!         Pointers to status Table
@@ -149,6 +159,22 @@ public:
     //!
     bool IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput);
 
+    //!
+    //! \brief  replace output surface from Tile-Y to Linear
+    //! \param  [in] params
+    //!         Pointer to VP pipeline params
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+#if (_DEBUG || _RELEASE_INTERNAL)
+    MOS_STATUS SurfaceReplace(PVP_PIPELINE_PARAMS params);
+#endif
+
+    // for debug purpose
+#if (_DEBUG || _RELEASE_INTERNAL)
+    virtual VPHAL_SURFACE *AllocateTempTargetSurface(VPHAL_SURFACE *m_tempTargetSurface);
+#endif
+
 protected:
 
     //!
@@ -166,6 +192,13 @@ protected:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     virtual MOS_STATUS ExecuteVpPipeline();
+
+    //!
+    //! \brief  updated Execute Vp Pipeline status
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS UpdateExecuteStatus();
 
     //!
     //! \brief  Create SwFilterPipe
@@ -231,6 +264,49 @@ protected:
         return MOS_STATUS_SUCCESS;
     }
 
+    //!
+    //! \brief  set Video Processing Settings
+    //! \param  [in] params
+    //!         Pointer to the input parameters
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS SetVideoProcessingSettings(void* settings)
+    {
+        if (!settings)
+        {
+            VPHAL_PUBLIC_NORMALMESSAGE("No VPP Settings needed, driver to handle features behavious by self");
+            return MOS_STATUS_SUCCESS;
+        }
+
+        VP_SETTINGS* vpSettings = (VP_SETTINGS*)settings;
+
+        if (m_vpSettings == nullptr)
+        {
+            m_vpSettings = (VP_SETTINGS*)MOS_AllocAndZeroMemory(sizeof(VP_SETTINGS));
+
+            if (m_vpSettings == nullptr)
+            {
+                VP_PUBLIC_ASSERTMESSAGE("No Space, VP Settings created failed");
+                return MOS_STATUS_NO_SPACE;
+            }
+        }
+
+        *m_vpSettings = *vpSettings;
+
+        return MOS_STATUS_SUCCESS;
+    }
+
+    //!
+    //! \brief  Judge if it is gt test environment
+    //! \return bool
+    //!         true if success, else false
+    //!
+    virtual bool IsGtEnv()
+    {
+        return false;
+    }
+
 protected:
     VP_PARAMS              m_pvpParams              = {};   //!< vp Pipeline params
     VP_MHWINTERFACE        m_vpMhwInterface         = {};   //!< vp Pipeline Mhw Interface
@@ -249,8 +325,7 @@ protected:
     // Surface dumper fields (counter and specification)
     uint32_t               m_frameCounter           = 0;
 #if (_DEBUG || _RELEASE_INTERNAL)
-    VpSurfaceDumper       *m_surfaceDumper          = nullptr;
-    VpParameterDumper     *m_parameterDumper        = nullptr;
+    VpDebugInterface      *m_debugInterface         = nullptr;
 #endif
     bool                   m_currentFrameAPGEnabled = false;
     PacketFactory         *m_pPacketFactory         = nullptr;
@@ -260,6 +335,10 @@ protected:
     VPFeatureManager      *m_paramChecker           = nullptr;
     VP_PACKET_SHARED_CONTEXT *m_packetSharedContext = nullptr;
     VpInterface           *m_vpInterface            = nullptr;
+#if (_DEBUG || _RELEASE_INTERNAL)
+    VPHAL_SURFACE         *m_tempTargetSurface      = nullptr;
+#endif
+    VP_SETTINGS           *m_vpSettings = nullptr;
 };
 
 struct _VP_SFC_PACKET_PARAMS

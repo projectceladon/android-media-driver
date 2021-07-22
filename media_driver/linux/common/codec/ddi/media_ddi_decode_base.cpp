@@ -137,9 +137,33 @@ VAStatus DdiMediaDecode::ParseProcessingBuffer(
         decProcessingParams->m_outputSurfaceRegion.m_width  = procBuf->output_region->width;
         decProcessingParams->m_outputSurfaceRegion.m_height = procBuf->output_region->height;
 
+        // Interpolation flags
+        // Set the vdbox scaling mode
+        uint32_t uInterpolationflags = 0;
+#if VA_CHECK_VERSION(1, 9, 0)
+        uInterpolationflags = procBuf->filter_flags & VA_FILTER_INTERPOLATION_MASK;
+#endif
+
+        switch (uInterpolationflags)
+        {
+#if VA_CHECK_VERSION(1, 9, 0)
+        case VA_FILTER_INTERPOLATION_NEAREST_NEIGHBOR:
+            decProcessingParams->m_scalingMode = CODECHAL_SCALING_NEAREST;
+            break;
+        case VA_FILTER_INTERPOLATION_BILINEAR:
+            decProcessingParams->m_scalingMode = CODECHAL_SCALING_BILINEAR;
+            break;
+        case VA_FILTER_INTERPOLATION_ADVANCED:
+        case VA_FILTER_INTERPOLATION_DEFAULT:
+#endif
+        default:
+            decProcessingParams->m_scalingMode = CODECHAL_SCALING_AVS;
+           break;
+        }
+
         // Chroma siting
         // Set the vertical chroma siting info
-        uint32_t chromaSitingFlags;
+        uint32_t chromaSitingFlags = 0;
         chromaSitingFlags                       = procBuf->input_color_properties.chroma_sample_location & 0x3;
         decProcessingParams->m_chromaSitingType = CODECHAL_CHROMA_SITING_NONE;
         decProcessingParams->m_rotationState    = 0;
@@ -220,8 +244,10 @@ VAStatus DdiMediaDecode::BeginPicture(
     m_streamOutEnabled              = false;
     m_ddiDecodeCtx->DecodeParams.m_numSlices       = 0;
     m_ddiDecodeCtx->DecodeParams.m_dataSize        = 0;
+    m_ddiDecodeCtx->DecodeParams.m_dataOffset      = 0;
     m_ddiDecodeCtx->DecodeParams.m_deblockDataSize = 0;
     m_ddiDecodeCtx->DecodeParams.m_executeCallIndex = 0;
+    m_ddiDecodeCtx->DecodeParams.m_cencBuf         = nullptr;
     m_groupIndex                                   = 0;
 
     // register render targets
@@ -660,7 +686,7 @@ VAStatus DdiMediaDecode::SetDecodeParams()
 
     if (m_ddiDecodeCtx->pCpDdiInterface)
     {
-        DDI_CHK_RET(m_ddiDecodeCtx->pCpDdiInterface->SetDecodeParams(&m_ddiDecodeCtx->DecodeParams),"SetDecodeParams failed!");
+        DDI_CHK_RET(m_ddiDecodeCtx->pCpDdiInterface->SetDecodeParams(m_ddiDecodeCtx, m_codechalSettings),"SetDecodeParams failed!");
     }
 
     Mos_Solo_OverrideBufferSize(m_ddiDecodeCtx->DecodeParams.m_dataSize, m_ddiDecodeCtx->DecodeParams.m_dataBuffer);
@@ -694,6 +720,7 @@ VAStatus DdiMediaDecode::ExtraDownScaling(
     }
 
     if(m_ddiDecodeCtx->DecodeParams.m_procParams != nullptr &&
+       m_procBuf &&
        !isDecodeDownScalingSupported)
     {
         //check vp context
@@ -1019,6 +1046,14 @@ VAStatus DdiMediaDecode::CreateBuffer(
             buf->pData      = (uint8_t*)MOS_AllocAndZeroMemory(size * numElements);
             buf->format     = Media_Format_CPU;
             break;
+#if VA_CHECK_VERSION(1, 10, 0)
+        case VAContextParameterUpdateBufferType:
+        {
+            buf->pData      = (uint8_t*)MOS_AllocAndZeroMemory(size * numElements);
+            buf->format     = Media_Format_CPU;
+            break;
+        }
+#endif
         default:
             va = m_ddiDecodeCtx->pCpDdiInterface->CreateBuffer(type, buf, size, numElements);
             if (va  == VA_STATUS_ERROR_UNSUPPORTED_BUFFERTYPE)
@@ -1304,6 +1339,10 @@ void DdiMediaDecode::ReportDecodeMode(
             break;
         case CODECHAL_DECODE_MODE_VP9VLD:
             userFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_DECODE_VP9_MODE_ID;
+            MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, nullptr);
+            break;
+        case CODECHAL_DECODE_MODE_AV1VLD:
+            userFeatureWriteData.ValueID = __MEDIA_USER_FEATURE_VALUE_DECODE_AV1_MODE_ID;
             MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, nullptr);
             break;
         default:

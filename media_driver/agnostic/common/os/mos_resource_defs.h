@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2018, Intel Corporation
+* Copyright (c) 2009-2020, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -310,7 +310,11 @@ C_ASSERT(Format_Count == 103); //!< When adding, update assert & vphal_solo_scen
           ( IS_PL2_FORMAT(format)       || \
             IS_PL3_FORMAT(format)       || \
             IS_PA_FORMAT(format)        || \
-            (format == Format_400P))
+            (format == Format_400P) )
+
+#define IS_ALPHA_YUV_FORMAT(format)        \
+          ( (format == Format_AYUV)     || \
+            (format == Format_AUYV) )
 
 #define CASE_YUV_FORMAT  \
     CASE_PL2_FORMAT:     \
@@ -496,6 +500,7 @@ typedef enum _MOS_TILE_MODE_GMM : uint8_t
     MOS_TILE_64_GMM,
     MOS_TILE_X_GMM,
     MOS_TILE_4_GMM,
+    MOS_TILE_UNSET_GMM
 } MOS_TILE_MODE_GMM;
 C_ASSERT(MOS_TILE_4_GMM == 3);
 

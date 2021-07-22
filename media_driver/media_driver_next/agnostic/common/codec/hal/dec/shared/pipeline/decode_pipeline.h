@@ -222,6 +222,16 @@ public:
         return m_osInterface->phasedSubmission;
     }
 
+    //!
+    //! \brief    Help function to check if guc submission mode
+    //!
+    //! \return   True if guc submission mode, otherwise return false
+    //!
+    virtual bool IsGucSubmission()
+    {
+        return m_osInterface->bGucSubmission;
+    }
+
 #ifdef _DECODE_PROCESSING_SUPPORTED
     //!
     //! \brief  Check if down sampling supported for current frame
@@ -259,6 +269,12 @@ public:
     //! \return Pointer of Wa table
     //!
     MEDIA_WA_TABLE *GetWaTable() { return m_waTable; }
+
+    //!
+    //! \brief Get Sku table
+    //! \return Pointer of SKU table
+    //!
+    MEDIA_FEATURE_TABLE *GetSkuTable() { return m_skuTable; }
 
     DeclareDecodePacketId(hucCopyPacketId);
     DeclareDecodePacketId(hucCpStreamOutPacketId);
@@ -357,6 +373,33 @@ protected:
 #ifdef _DECODE_PROCESSING_SUPPORTED
     MOS_STATUS DumpDownSamplingParams(DecodeDownSamplingFeature &downSamplingParams);
 #endif
+
+    //!
+    //! \brief  Dump render targets
+    //! \param  [in] reportData
+    //!         Decode report data
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS DumpOutput(const DecodeStatusReportData& reportData);
+#endif
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    //!
+    //! \brief  User feature key report for Vdbox IDs
+    //! \param  [in] status
+    //!         Status report from HW
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS ReportVdboxIds(const DecodeStatusMfx& status);
+
+    //!
+    //! \brief  Internal status check after each frame
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS StatusCheck();
 #endif
 
 private:
@@ -402,6 +445,10 @@ protected:
     bool                    m_singleTaskPhaseSupported = true; //!< Indicates whether sumbit packets in single phase
 
     MOS_GPU_CONTEXT         m_decodeContext = MOS_GPU_CONTEXT_INVALID_HANDLE;    //!< decode context inuse
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    uint32_t                m_statusCheckCount = 0;     //!< count for status check
+#endif
 };
 
 }//decode

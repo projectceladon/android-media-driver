@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -35,12 +35,14 @@
 #include "media_interfaces_vphal.h"
 #include "mos_os.h"
 #include "renderhal.h"
+#include "media_mem_compression.h"
 
 using namespace vp;
 
 typedef MediaInterfacesFactory<VphalDevice> VphalFactory;
 
-MediaSfcRender::MediaSfcRender(PMOS_INTERFACE osInterface, MEDIA_SFC_INTERFACE_MODE mode) : m_osInterface(osInterface), m_mode(mode)
+MediaSfcRender::MediaSfcRender(PMOS_INTERFACE osInterface, MEDIA_SFC_INTERFACE_MODE mode, MediaMemComp *mmc) :
+    m_osInterface(osInterface), m_mode(mode), m_mmc(mmc)
 {
 }
 
@@ -235,6 +237,7 @@ MOS_STATUS MediaSfcRender::Initialize()
     m_vpMhwinterface->m_mhwMiInterface         = m_renderHal->pMhwMiInterface;
     m_vpMhwinterface->m_statusTable            = m_statusTable;
     m_vpMhwinterface->m_vpPlatformInterface    = m_vpPlatformInterface;
+    m_vpMhwinterface->m_settings               = nullptr;
 
     if (m_mode.veboxSfcEnabled)
     {
@@ -249,7 +252,7 @@ MOS_STATUS MediaSfcRender::Initialize()
     {
         m_vdboxSfcRender = MOS_New(MediaVdboxSfcRender);
         VP_PUBLIC_CHK_NULL_RETURN(m_vdboxSfcRender);
-        VP_PUBLIC_CHK_STATUS_RETURN(m_vdboxSfcRender->Initialize(*m_vpMhwinterface));
+        VP_PUBLIC_CHK_STATUS_RETURN(m_vdboxSfcRender->Initialize(*m_vpMhwinterface, m_mmc));
     }
 
     m_initialized = true;
@@ -275,19 +278,19 @@ MOS_STATUS MediaSfcRender::InitScalingParams(FeatureParamScaling &scalingParams,
     scalingParams.scalingMode               = VPHAL_SCALING_AVS;
     scalingParams.scalingPreference         = VPHAL_SCALING_PREFER_SFC;              //!< DDI indicate Scaling preference
     scalingParams.bDirectionalScalar        = false;                                 //!< Vebox Directional Scalar
-    scalingParams.rcSrcInput                = rcSrcInput;                            //!< No input crop support for VD mode. rcSrcInput must have same width/height of input image.
-    scalingParams.rcDstInput                = sfcParam.output.rcDst;
-    scalingParams.rcMaxSrcInput             = rcSrcInput;
-    scalingParams.dwWidthInput              = sfcParam.input.width;
-    scalingParams.dwHeightInput             = sfcParam.input.height;
-    scalingParams.rcSrcOutput               = rcOutput;
-    scalingParams.rcDstOutput               = rcOutput;
-    scalingParams.rcMaxSrcOutput            = rcOutput;
-    scalingParams.dwWidthOutput             = sfcParam.output.surface->dwWidth;
-    scalingParams.dwHeightOutput            = sfcParam.output.surface->dwHeight;
+    scalingParams.input.rcSrc               = rcSrcInput;                            //!< No input crop support for VD mode. rcSrcInput must have same width/height of input image.
+    scalingParams.input.rcDst               = sfcParam.output.rcDst;
+    scalingParams.input.rcMaxSrc            = rcSrcInput;
+    scalingParams.input.dwWidth             = sfcParam.input.width;
+    scalingParams.input.dwHeight            = sfcParam.input.height;
+    scalingParams.output.rcSrc              = rcOutput;
+    scalingParams.output.rcDst              = rcOutput;
+    scalingParams.output.rcMaxSrc           = rcOutput;
+    scalingParams.output.dwWidth            = sfcParam.output.surface->dwWidth;
+    scalingParams.output.dwHeight           = sfcParam.output.surface->dwHeight;
     scalingParams.pColorFillParams          = nullptr;
     scalingParams.pCompAlpha                = nullptr;
-    scalingParams.colorSpaceOutput          = sfcParam.output.colorSpace;
+    scalingParams.csc.colorSpaceOutput      = sfcParam.output.colorSpace;
     return MOS_STATUS_SUCCESS;
 }
 
@@ -305,12 +308,12 @@ MOS_STATUS MediaSfcRender::InitScalingParams(FeatureParamScaling &scalingParams,
     scalingParams.scalingPreference      = VPHAL_SCALING_PREFER_SFC;
     scalingParams.bDirectionalScalar     = false;
     scalingParams.formatInput            = sfcParam.input.surface->Format;
-    scalingParams.rcSrcInput             = sfcParam.input.rcSrc;
-    scalingParams.rcMaxSrcInput          = sfcParam.input.rcSrc;
-    scalingParams.dwWidthInput           = sfcParam.input.surface->dwWidth;
-    scalingParams.dwHeightInput          = sfcParam.input.surface->dwHeight;
+    scalingParams.input.rcSrc            = sfcParam.input.rcSrc;
+    scalingParams.input.rcMaxSrc         = sfcParam.input.rcSrc;
+    scalingParams.input.dwWidth          = sfcParam.input.surface->dwWidth;
+    scalingParams.input.dwHeight         = sfcParam.input.surface->dwHeight;
     scalingParams.formatOutput           = sfcParam.output.surface->Format;
-    scalingParams.colorSpaceOutput       = sfcParam.output.colorSpace;
+    scalingParams.csc.colorSpaceOutput   = sfcParam.output.colorSpace;
     scalingParams.pColorFillParams       = nullptr;
     scalingParams.pCompAlpha             = nullptr;
 
@@ -321,23 +324,21 @@ MOS_STATUS MediaSfcRender::InitScalingParams(FeatureParamScaling &scalingParams,
         sfcParam.input.rotation == (MEDIA_ROTATION)VPHAL_MIRROR_HORIZONTAL    ||
         sfcParam.input.rotation == (MEDIA_ROTATION)VPHAL_MIRROR_VERTICAL)
     {
-        scalingParams.dwWidthOutput  = sfcParam.output.surface->dwWidth;
-        scalingParams.dwHeightOutput = sfcParam.output.surface->dwHeight;
-
-        scalingParams.rcDstInput     = sfcParam.output.rcDst;
-        scalingParams.rcSrcOutput    = recOutput;
-        scalingParams.rcDstOutput    = recOutput;
-        scalingParams.rcMaxSrcOutput = recOutput;
+        scalingParams.output.dwWidth    = sfcParam.output.surface->dwWidth;
+        scalingParams.output.dwHeight   = sfcParam.output.surface->dwHeight;
+        scalingParams.input.rcDst       = sfcParam.output.rcDst;
+        scalingParams.output.rcSrc      = recOutput;
+        scalingParams.output.rcDst      = recOutput;
+        scalingParams.output.rcMaxSrc   = recOutput;
     }
     else
     {
-        scalingParams.dwWidthOutput      = sfcParam.output.surface->dwHeight;
-        scalingParams.dwHeightOutput     = sfcParam.output.surface->dwWidth;
-
-        RECT_ROTATE(scalingParams.rcDstInput, sfcParam.output.rcDst);
-        RECT_ROTATE(scalingParams.rcSrcOutput, recOutput);
-        RECT_ROTATE(scalingParams.rcDstOutput, recOutput);
-        RECT_ROTATE(scalingParams.rcMaxSrcOutput, recOutput);
+        scalingParams.output.dwWidth     = sfcParam.output.surface->dwHeight;
+        scalingParams.output.dwHeight    = sfcParam.output.surface->dwWidth;
+        RECT_ROTATE(scalingParams.input.rcDst, sfcParam.output.rcDst);
+        RECT_ROTATE(scalingParams.output.rcSrc, recOutput);
+        RECT_ROTATE(scalingParams.output.rcDst, recOutput);
+        RECT_ROTATE(scalingParams.output.rcMaxSrc, recOutput);
     }
     return MOS_STATUS_SUCCESS;
 }
@@ -356,6 +357,7 @@ MOS_STATUS MediaSfcRender::IsParameterSupported(
 
     VpScalingFilter scalingFilter(m_vpMhwinterface);
     FeatureParamScaling scalingParams = {};
+
     VP_PUBLIC_CHK_STATUS_RETURN(InitScalingParams(scalingParams, sfcParam));
 
     VP_EXECUTE_CAPS vpExecuteCaps   = {};
@@ -393,8 +395,8 @@ MOS_STATUS MediaSfcRender::IsParameterSupported(
     }
 
     // Check output region rectangles
-    if ((scalingParams.rcDstInput.bottom - scalingParams.rcDstInput.top > (int32_t)scalingParams.dwHeightOutput) ||
-        (scalingParams.rcDstInput.right - scalingParams.rcDstInput.left > (int32_t)scalingParams.dwWidthOutput))
+    if ((scalingParams.input.rcDst.bottom - scalingParams.input.rcDst.top > (int32_t)scalingParams.output.dwHeight) ||
+        (scalingParams.input.rcDst.right - scalingParams.input.rcDst.left > (int32_t)scalingParams.output.dwWidth))
     {
         return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
     }
@@ -428,7 +430,7 @@ MOS_STATUS MediaSfcRender::IsParameterSupported(
     VP_PUBLIC_CHK_NULL_RETURN(m_sfcInterface);
 
     VpScalingFilter scalingFilter(m_vpMhwinterface);
-    FeatureParamScaling scalingParams       = {};
+    FeatureParamScaling scalingParams = {};
 
     VP_PUBLIC_CHK_STATUS_RETURN(InitScalingParams(scalingParams, sfcParam));
 
@@ -460,15 +462,15 @@ MOS_STATUS MediaSfcRender::IsParameterSupported(
     }
 
     // Check input region rectangles
-    if ((scalingParams.rcSrcInput.bottom - scalingParams.rcSrcInput.top > (int32_t)scalingParams.dwHeightInput) ||
-        (scalingParams.rcSrcInput.right - scalingParams.rcSrcInput.left > (int32_t)scalingParams.dwWidthInput))
+    if ((scalingParams.input.rcSrc.bottom - scalingParams.input.rcSrc.top > (int32_t)scalingParams.input.dwHeight) ||
+        (scalingParams.input.rcSrc.right - scalingParams.input.rcSrc.left > (int32_t)scalingParams.input.dwWidth))
     {
         return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
     }
 
     // Check output region rectangles
-    if ((scalingParams.rcDstInput.bottom - scalingParams.rcDstInput.top > (int32_t)scalingParams.dwHeightOutput) ||
-        (scalingParams.rcDstInput.right - scalingParams.rcDstInput.left > (int32_t)scalingParams.dwWidthOutput))
+    if ((scalingParams.input.rcDst.bottom - scalingParams.input.rcDst.top > (int32_t)scalingParams.output.dwHeight) ||
+        (scalingParams.input.rcDst.right - scalingParams.input.rcDst.left > (int32_t)scalingParams.output.dwWidth))
     {
         return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
     }

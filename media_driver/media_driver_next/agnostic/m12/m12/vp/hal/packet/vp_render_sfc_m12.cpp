@@ -57,6 +57,8 @@ MOS_STATUS SfcRenderM12::SetupSfcState(
     sfcStateParamsM12 = static_cast<PMHW_SFC_STATE_PARAMS_G12>(m_renderData.sfcStateParams);
     VP_RENDER_CHK_NULL_RETURN(sfcStateParamsM12);
 
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resAvsLineBuffer, m_AVSLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
+    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resIefLineBuffer, m_IEFLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
     VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resSfdLineBuffer, m_SFDLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
     VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resAvsLineTileBuffer, m_AVSLineTileBufferSurface));
     VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(sfcStateParamsM12->resIefLineTileBuffer, m_IEFLineTileBufferSurface));
@@ -115,13 +117,10 @@ MOS_STATUS SfcRenderM12::SetSfcStateInputOrderingModeHcp(
     else if (CODECHAL_VP9 == m_videoConfig.codecStandard)
     {
         VPHAL_COLORPACK colorPack = VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat);
-        if (VPHAL_COLORPACK_420 == colorPack)
+        if ((VPHAL_COLORPACK_420 == colorPack)
+            || (VPHAL_COLORPACK_444 == colorPack))
         {
             sfcStateParams->dwVDVEInputOrderingMode = MhwSfcInterfaceG12::LCU_64_64_VP9;
-        }
-        else if (VPHAL_COLORPACK_444 == colorPack)
-        {
-            sfcStateParams->dwVDVEInputOrderingMode = MhwSfcInterfaceG12::LCU_64_64_VP9_ENC;
         }
         else
         {
@@ -188,13 +187,10 @@ MOS_STATUS SfcRenderM12::SetupScalabilityParams()
     {
         VPHAL_COLORPACK colorPack = VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat);
         if ((VPHAL_COLORPACK_420 == colorPack || VPHAL_COLORPACK_422 == colorPack) &&
-            (!MOS_IS_ALIGNED(m_scalabilityParams.srcStartX, 2) || !MOS_IS_ALIGNED(m_scalabilityParams.srcEndX, 2)))
+            (!MOS_IS_ALIGNED(m_scalabilityParams.srcStartX, 2) || MOS_IS_ALIGNED(m_scalabilityParams.srcEndX, 2)))
         {
-            VP_PUBLIC_ASSERTMESSAGE("srcStartX(%d) or srcEndX(%d) is not 2 aligned with input format(%d).",
+            VP_PUBLIC_ASSERTMESSAGE("srcStartX(%d) is not even or srcEndX(%d) is not odd with input format(%d).",
                  m_scalabilityParams.srcStartX, m_scalabilityParams.srcEndX, m_renderData.SfcInputFormat);
-
-            m_scalabilityParams.srcStartX   = MOS_ALIGN_CEIL(m_scalabilityParams.srcStartX, 2);
-            m_scalabilityParams.srcEndX     = MOS_ALIGN_CEIL(m_scalabilityParams.srcEndX, 2);
         }
         sfcStateParams->tileType     = m_scalabilityParams.tileType;
         sfcStateParams->srcStartX    = m_scalabilityParams.srcStartX;
@@ -204,4 +200,62 @@ MOS_STATUS SfcRenderM12::SetupScalabilityParams()
     }
 
     return MOS_STATUS_SUCCESS;
+}
+
+//!
+//! \brief    Set sfc pipe selected with vebox
+//! \details  Set sfc pipe selected with vebox
+//! \param    [in] dwSfcPipe
+//!           Sfc pipe selected with vebox
+//! \param    [in] dwSfcNum
+//!           Sfc pipe num in total
+//! \return   MOS_STATUS
+//!           MOS_STATUS_SUCCESS if success, else fail reason
+MOS_STATUS SfcRenderM12::SetSfcPipe(
+    uint32_t dwSfcPipe,
+    uint32_t dwSfcNum)
+{
+    MOS_STATUS         eStatus = MOS_STATUS_SUCCESS;
+
+    VP_PUBLIC_CHK_NULL_RETURN(m_sfcInterface);
+    PMHW_SFC_INTERFACE pSfcInterface = static_cast<PMHW_SFC_INTERFACE>(m_sfcInterface);
+
+    if (dwSfcPipe >= dwSfcNum)
+    {
+        VP_PUBLIC_ASSERTMESSAGE("Scalability sfc pipe set by vebox, dwSfcPipe %d, dwSfcNum %d", dwSfcPipe, dwSfcNum);
+        return MOS_STATUS_INVALID_PARAMETER;
+    }
+
+    m_scalabilityParams.curPipe    = dwSfcPipe;
+    m_scalabilityParams.numPipe    = dwSfcNum;
+    m_scalabilityParams.engineMode = (0 == m_scalabilityParams.curPipe) ? 1 : (m_scalabilityParams.numPipe - 1 == m_scalabilityParams.curPipe) ? 2 : 3;
+
+    pSfcInterface = m_sfcInterface;
+
+    pSfcInterface->SetSfcIndex(dwSfcPipe, dwSfcNum);
+
+    return eStatus;
+}
+
+bool SfcRenderM12::IsOutputChannelSwapNeeded(MOS_FORMAT outputFormat)
+{
+    // ARGB8,ABGR10, output format need to enable swap
+    // Only be used with RGB output formats and CSC conversion is turned on.
+    if (outputFormat == Format_X8R8G8B8 ||
+        outputFormat == Format_A8R8G8B8 ||
+        outputFormat == Format_R10G10B10A2)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+bool SfcRenderM12::IsCscNeeded(SFC_CSC_PARAMS &cscParams)
+{
+    return cscParams.bCSCEnabled                        ||
+        IsInputChannelSwapNeeded(cscParams.inputFormat) ||
+        IsOutputChannelSwapNeeded(cscParams.outputFormat);
 }

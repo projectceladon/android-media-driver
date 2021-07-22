@@ -37,9 +37,15 @@ Equivalents for other distributions should work.
 <workspace>
     |- media-driver
 ```
-4. 
+4. Create build_media new folder under your workspace
 ```
 $ mkdir <workspace>/build_media
+```
+then the workspace looks like below
+```
+<workspace>
+    |- media-driver
+    |- build_media
 ```
 5. 
 ```
@@ -99,7 +105,8 @@ Media driver supports two build types as below
 
 ### Decoding/Encoding Features
 
-|CODEC | Build Types | BDW | SKL | BXT/APL | KBLx | ICL | EHL/JSL | TGL/RKL | DG1/SG1 |
+
+|CODEC | Build Types | BDW | SKL | BXT/APL | KBLx | ICL | EHL/JSL | TGL/RKL/ADL-S/ADL-P| DG1/SG1 |
 |---|---|---|---|---|---|---|---|---|---|
 | AVC | <u>Full-Feature</u><br><i>Free-Kernel</i> | <u>D/Es</u><br><i>D<i> | <u>D/E/Es</u><br><i>D/E<i> | <u>D/E/Es</u><br><i>D/E<i> | <u>D/E/Es</u><br><i>D/E<i> | <u>D/E/Es</u><br><i>D/E<i> | <u>D/E</u><br><i>D/E<i> | <u>D/E/Es</u><br><i>D/E<i> | <u>D/E/Es</u><br><i>D/E<i> |
 | MPEG-2 | <u>Full-Feature</u><br><i>Free-Kernel</i> | <u>D/Es</u><br><i>D<i> | <u>D/Es</u><br><i>D<i> | <u>D</u><br><i>D<i> | <u>D/Es</u><br><i>D<i> | <u>D/Es</u><br><i>D<i> | <u>D</u><br><i>D<i> | <u>D/Es</u><br><i>D<i> | <u>D/Es</u><br><i>D<i> |
@@ -130,7 +137,7 @@ Media driver supports two build types as below
 
 \* VP8 decoding is only supported on TGL platform
 
-\** AV1 film grain kernel is not open so far
+\** AV1 film grain kernel is not open source yet which doesn't necessarily match the libaom algorithm or film grain synthesis.
 
 For more information, please refer to
 * [Media Features Summary](https://github.com/intel/media-driver/blob/master/docs/media_features.md#media-features-summary)
@@ -139,7 +146,8 @@ For more information, please refer to
 
 ### Video Processing Features
 
-| Features | Build Types | BDW | SKL | BXT/APL | KBLx | ICL | EHL/JSL | TGL/RKL | DG1/SG1 |
+
+| Features | Build Types | BDW | SKL | BXT/APL | KBLx | ICL | EHL/JSL | TGL/RKL/ADL-S/ADL-P  | DG1/SG1 |
 |---|---|---|---|---|----|---|---|---|---|
 | Blending | <u>Full-Feature</u><br><i>Free-Kernel</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> |
 | CSC<br>(Color Space Conversion) | <u>Full-Feature</u><br><i>Free-Kernel</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>&nbsp;</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> | <u>Yes</u><br><i>Yes</i> |

@@ -42,6 +42,9 @@ namespace decode
 class DecodeDownSamplingFeature: public MediaFeature
 {
 public:
+    using SurfaceWidthT  = decltype(MOS_SURFACE::dwWidth);
+    using SurfaceHeightT = decltype(MOS_SURFACE::dwHeight);
+
     DecodeDownSamplingFeature(MediaFeatureManager *featureManager, DecodeAllocator *allocator, CodechalHwInterface *hwInterface);
     virtual ~DecodeDownSamplingFeature();
 
@@ -81,16 +84,23 @@ public:
     bool           m_isInputSurfAllocated = false;
     bool           m_isReferenceOnlyPattern = false;
 
+    CODECHAL_SCALING_MODE  m_scalingMode = CODECHAL_SCALING_NEAREST;
+
     // Histogram
     PMOS_BUFFER         m_histogramBuffer = nullptr;    // SFC histogram internal  buffer
     PMOS_SURFACE        m_histogramDestSurf = nullptr;  // SFC histogram dest surface
     bool                m_histogramDebug = false;
     const uint32_t      m_histogramBinWidth = 4;
 
+#if (_DEBUG || _RELEASE_INTERNAL)
+    MOS_SURFACE    m_outputSurfaceList[DecodeBasicFeature::m_maxFrameIndex] = {}; //! \brief Downsampled surfaces
+#endif
+
 protected:
     virtual MOS_STATUS UpdateInternalTargets(DecodeBasicFeature &basicFeature);
 
     virtual MOS_STATUS GetRefFrameList(std::vector<uint32_t> &refFrameList) = 0;
+    virtual MOS_STATUS GetDecodeTargetSize(SurfaceWidthT &width, SurfaceHeightT &height) = 0;
     virtual MOS_STATUS GetDecodeTargetFormat(MOS_FORMAT &format) = 0;
     virtual MOS_STATUS UpdateDecodeTarget(MOS_SURFACE &surface) = 0;
 
